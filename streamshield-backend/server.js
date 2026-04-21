@@ -355,7 +355,38 @@ function ruleBasedScan(transcript) {
   return flags;
 }
 
-async function callGemini(prompt) {
+function buildFallbackSummary(transcript, flags) {
+  if (!Array.isArray(transcript) || transcript.length === 0) {
+    return "No transcript text was available to summarize.";
+  }
+
+  const durationSeconds = transcript[transcript.length - 1]?.t || 0;
+  const duration = fmtDuration(durationSeconds);
+
+  const opening = transcript
+    .slice(0, 8)
+    .map((l) => l.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const shortOpening =
+    opening.length > 260 ? opening.slice(0, 257).trimEnd() + "..." : opening;
+
+  const high = flags.filter((f) => f.sev === "high").length;
+  const med = flags.filter((f) => f.sev === "med").length;
+  const low = flags.filter((f) => f.sev === "low").length;
+
+  if (flags.length === 0) {
+    return `This video runs about ${duration}. The opening portion suggests the video focuses on: ${shortOpening || "general spoken commentary"}. No obvious rebroadcast-risk categories were triggered by the current scanner, so it appears relatively safe for replay based on the transcript alone.`;
+  }
+
+  const topCats = [...new Set(flags.map((f) => f.cat))].slice(0, 3).join(", ");
+
+  return `This video runs about ${duration}. The transcript suggests it focuses on: ${shortOpening || "general spoken commentary"}. The scanner found ${flags.length} potentially relevant moment${flags.length === 1 ? "" : "s"} (${high} high, ${med} medium, ${low} low), mainly around ${topCats}.`;
+}
+
+async function callGemini(prompt, responseMimeType = "application/json") {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
@@ -365,7 +396,7 @@ async function callGemini(prompt) {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.2,
-          responseMimeType: "application/json",
+          responseMimeType,
         },
       }),
     }
@@ -380,8 +411,10 @@ async function callGemini(prompt) {
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
-async function aiScan(transcript) {
-  if (!GEMINI_API_KEY) return { flags: [], summary: null };
+async function aiScan(transcript, ruleFlags = []) {
+  if (!GEMINI_API_KEY) {
+    return { flags: [], summary: buildFallbackSummary(transcript, ruleFlags) };
+  }
 
   const joined = transcript
     .map((l) => `[${l.t}] ${l.text}`)
@@ -413,12 +446,13 @@ Rules:
 - Use only sev values: "high", "med", or "low"
 - If there are no additional risks, return an empty flags array
 - Keep the summary concise and useful
+- Mention the actual subject matter of the video, not just the risk level
 
 Transcript:
 ${joined}`;
 
   try {
-    const text = await callGemini(prompt);
+    const text = await callGemini(prompt, "application/json");
     if (!text) throw new Error("Gemini returned empty text");
 
     let parsed;
@@ -437,13 +471,13 @@ ${joined}`;
       summary:
         typeof parsed.summary === "string" && parsed.summary.trim()
           ? parsed.summary.trim()
-          : "AI reviewed the transcript but did not return a usable summary.",
+          : buildFallbackSummary(transcript, ruleFlags),
     };
   } catch (err) {
     console.error("Gemini scan failed:", err.message);
     return {
       flags: [],
-      summary: "AI summary is temporarily unavailable. Showing rule-based scan results only.",
+      summary: buildFallbackSummary(transcript, ruleFlags),
     };
   }
 }
@@ -521,7 +555,7 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     const ruleFlags = ruleBasedScan(transcript);
-    const aiResult = await aiScan(transcript);
+    const aiResult = await aiScan(transcript, ruleFlags);
     const flags = mergeFlags(ruleFlags, aiResult.flags);
 
     res.json({
@@ -549,7 +583,8 @@ app.post("/api/ai-scan", async (req, res) => {
       return res.status(400).json({ error: "Missing or empty transcript" });
     }
 
-    const { flags, summary } = await aiScan(transcript);
+    const ruleFlags = ruleBasedScan(transcript);
+    const { flags, summary } = await aiScan(transcript, ruleFlags);
     res.json({ flags, summary, aiEnabled: true });
   } catch (err) {
     console.error("AI scan route error:", err);
@@ -582,7 +617,7 @@ ${joined}${flagSummary}
 Question:
 ${question}`;
 
-    const answer = await callGemini(prompt);
+    const answer = await callGemini(prompt, "text/plain");
     res.json({ answer: answer || "No response" });
   } catch (err) {
     console.error("Chat error:", err);
@@ -596,6 +631,6 @@ app.get("*", (req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🛡 StreamShield running on port ${PORT}`);
-  console.log(`AI: enabled (Gemini hard-coded)`);
+  console.log("AI: enabled (Gemini hard-coded)");
   console.log(`YouTube cookie: ${YOUTUBE_COOKIE ? "set" : "not set"}`);
 });
