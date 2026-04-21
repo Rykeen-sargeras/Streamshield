@@ -95,7 +95,7 @@ async function fetchPlayerData(videoId) {
       const resp = await fetch(IT_ENDPOINT, {
         method: "POST",
         headers: buildYouTubeHeaders(client.ua),
-        body: JSON.stringify({ ...client.context, videoId }),
+        body: JSON.stringify({ context: client.context, videoId }),
       });
 
       if (!resp.ok) {
@@ -106,6 +106,7 @@ async function fetchPlayerData(videoId) {
         console.error(`[YT player] ${client.name} failed`, {
           status: resp.status,
           hasCookie: !!YOUTUBE_COOKIE,
+          body: body.slice(0, 300),
         });
         continue;
       }
@@ -171,6 +172,7 @@ async function fetchCaptionXml(baseUrl, userAgent) {
     console.error("[YT captions] request failed", {
       status: r.status,
       hasCookie: !!YOUTUBE_COOKIE,
+      body: body.slice(0, 300),
     });
   }
 
@@ -439,7 +441,7 @@ app.post("/api/analyze", async (req, res) => {
       return res.status(502).json({
         error: "Failed to reach YouTube",
         detail: err.message,
-        hint: "Railway IP may be blocked or rate-limited by YouTube. Try setting YOUTUBE_COOKIE in Railway variables.",
+        hint: "Railway IP may be blocked, rate-limited, or the player request format may be rejected.",
       });
     }
 
@@ -466,7 +468,7 @@ app.post("/api/analyze", async (req, res) => {
       return res.status(502).json({
         error: "Could not fetch captions",
         detail: err.message,
-        hint: "YouTube likely blocked the caption request. Set YOUTUBE_COOKIE in Railway variables or retry with a different Railway deployment/IP.",
+        hint: "YouTube likely blocked the caption request or returned HTML instead of caption XML.",
       });
     }
 
