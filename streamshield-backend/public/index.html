@@ -227,8 +227,8 @@ Or the simple timestamp format:
     <div class="rc-tabs">
       <button class="rc-tab active" data-rc="flags" onclick="switchRc('flags')">⚑ Flags <span class="count" id="flagCount">0</span></button>
       <button class="rc-tab" data-rc="summary" onclick="switchRc('summary')">Summary</button>
-      <button class="rc-tab" data-rc="notes" onclick="switchRc('notes')">Notes</button>
-      <button class="rc-tab" data-rc="transcript" onclick="switchRc('transcript')">Script</button>
+      <button class="rc-tab" data-rc="notes" onclick="switchRc('notes')">Transcript</button>
+      <button class="rc-tab" data-rc="transcript" onclick="switchRc('transcript')">Full Transcript</button>
       <button class="rc-tab" data-rc="chat" onclick="switchRc('chat')">Chat</button>
     </div>
     <div class="rc-panel" id="rcPanel"></div>
@@ -240,10 +240,10 @@ Or the simple timestamp format:
   <p class="features-sub">Every feature NoteGPT offers, plus the one they don't.</p>
   <div class="feat-grid">
     <div class="feat"><div class="feat-icon">⚑</div><h4>ToS Flag Scanner</h4><p>Rule-based + AI scan for copyrighted music, slurs, graphic content, gambling promo, doxxing, and more — with exact timestamps.</p></div>
-    <div class="feat"><div class="feat-icon">✦</div><h4>AI Summary</h4><p>Powered by Claude. Core topic, key points, tone, and rebroadcast risk — condensed so you can decide fast.</p></div>
-    <div class="feat"><div class="feat-icon">⌖</div><h4>Jump-to Timestamps</h4><p>Every flag and note is clickable. Tap and the player jumps straight there.</p></div>
+    <div class="feat"><div class="feat-icon">✦</div><h4>AI Summary</h4><p>Powered by Gemini. Core topic, key points, tone, and rebroadcast risk — condensed so you can decide fast.</p></div>
+    <div class="feat"><div class="feat-icon">⌖</div><h4>Jump-to Timestamps</h4><p>Every flag and transcript summary row is clickable. Tap and the player jumps straight there.</p></div>
     <div class="feat"><div class="feat-icon">⎘</div><h4>Full Transcript</h4><p>Clean, line-by-line transcript with flagged segments highlighted inline. Copy, export, search instantly.</p></div>
-    <div class="feat"><div class="feat-icon">✎</div><h4>Smart Notes</h4><p>Auto-generated section notes you can paste into your stream outline.</p></div>
+    <div class="feat"><div class="feat-icon">✎</div><h4>Transcript Summaries</h4><p>Readable timestamp summaries so you know what you are clicking before you jump.</p></div>
     <div class="feat"><div class="feat-icon">◐</div><h4>Chat with Video</h4><p>Ask questions about the content. Get instant answers with timestamps.</p></div>
   </div>
 </section>
@@ -267,8 +267,11 @@ fetch("/api/health").then(r=>r.json()).then(d=>{
 }).catch(()=>{ document.getElementById("statusTag").textContent = "OFFLINE"; });
 
 function fmtTime(s){
-  s = Math.floor(s);
-  const m = Math.floor(s/60), ss = s%60;
+  s = Math.floor(s || 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  if (h > 0) return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
   return `${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
 }
 
@@ -279,9 +282,6 @@ function switchTab(which){
   document.getElementById("errorBox").classList.remove("active");
 }
 
-// ============================================================
-// URL MODE — calls backend /api/analyze
-// ============================================================
 async function analyzeUrl(){
   const url = document.getElementById("urlInput").value.trim();
   if(!url){ showError("Enter a YouTube URL first"); return; }
@@ -308,7 +308,7 @@ async function analyzeUrl(){
     });
     const data = await res.json();
     clearInterval(interval);
-    if(!res.ok){ throw new Error(data.error || "Analysis failed"); }
+    if(!res.ok){ throw new Error(data.detail || data.error || "Analysis failed"); }
     currentData = data;
     renderWorkspace();
     document.getElementById("workspace").scrollIntoView({behavior:"smooth"});
@@ -321,10 +321,6 @@ async function analyzeUrl(){
   }
 }
 
-// ============================================================
-// PASTE MODE — client-side parse + local scan, optionally
-// enriched via backend AI (/api/ai-scan)
-// ============================================================
 async function analyzePaste(){
   const raw = document.getElementById("transcriptPaste").value.trim();
   if(!raw){ showError("Paste a transcript first"); return; }
@@ -340,11 +336,9 @@ async function analyzePaste(){
       return;
     }
 
-    // Local rule-based scan
     let flags = ruleBasedScan(transcript);
     let summary = null;
 
-    // Optional AI enrichment via backend
     if(aiEnabled){
       try {
         const res = await fetch("/api/ai-scan", {
@@ -354,7 +348,6 @@ async function analyzePaste(){
         if(res.ok){
           const data = await res.json();
           summary = data.summary;
-          // Merge AI flags
           const seen = new Set(flags.map(f => `${Math.floor(f.t/10)}_${f.cat}`));
           for(const f of (data.flags || [])){
             const key = `${Math.floor(f.t/10)}_${f.cat}`;
@@ -388,8 +381,6 @@ async function analyzePaste(){
   }
 }
 
-// Robust parser — handles YouTube Studio's "Show transcript" format with glued
-// descriptors ("1 minuteSo...") AND the simple "MM:SS text" format AND [MM:SS]
 function parsePastedTranscript(raw) {
   const out = [];
   const lines = raw.split(/\r?\n/);
@@ -402,8 +393,6 @@ function parsePastedTranscript(raw) {
     const m = tsMatch[3] ? parseInt(tsMatch[2], 10) : parseInt(tsMatch[1], 10);
     const s = tsMatch[3] ? parseInt(tsMatch[3], 10) : parseInt(tsMatch[2], 10);
     let rest = tsMatch[4];
-    // Peel the YouTube duration descriptor ("1 minute", ", 6 seconds", etc.).
-    // Case-sensitive 's?' so we don't eat a capital 'S' from real transcript text.
     while (true) {
       const m2 = rest.match(/^(?:\s*,?\s*)(\d+)\s*(hour|minute|second)(s?)(.*)$/);
       if (!m2) break;
@@ -415,9 +404,6 @@ function parsePastedTranscript(raw) {
   return out;
 }
 
-// ============================================================
-// Demo data — for the "Load Demo" button in paste mode
-// ============================================================
 const DEMO_TRANSCRIPT = `0:011 secondWelcome back to the stream gang smash that like button
 0:1515 secondsTonight we're diving into ten moments that broke the internet
 0:3232 secondsStarting off strong this is that viral clip where the streamer played the full new Drake track on air
@@ -440,9 +426,6 @@ function loadDemo(){
   toast("Demo transcript loaded — click Scan Transcript");
 }
 
-// ============================================================
-// Rule-based scanner (same rules as backend, client-side for paste mode)
-// ============================================================
 const FLAG_RULES = [
   { cat:"Copyrighted Music (DMCA risk)", sev:"high",
     patterns:[/\b(drake|taylor swift|kanye|beyonc|the weeknd|ariana|bad bunny|bts|billie eilish|post malone|kendrick|sza|olivia rodrigo|dua lipa|ed sheeran|justin bieber|rihanna|eminem)\b/i,
@@ -522,9 +505,6 @@ function showError(msg){
   err.classList.add("active");
 }
 
-// ============================================================
-// Rendering
-// ============================================================
 function renderWorkspace(){
   document.getElementById("workspace").classList.add("active");
   const wrap = document.getElementById("videoWrap");
@@ -533,12 +513,12 @@ function renderWorkspace(){
   } else {
     wrap.innerHTML = `<div class="placeholder"><div class="big">⎘</div>Pasted transcript mode<br/><span style="opacity:.6">No video preview</span></div>`;
   }
-  document.getElementById("videoTitle").textContent = currentData.title;
-  document.getElementById("videoChannel").textContent = currentData.channel;
-  document.getElementById("videoDuration").textContent = currentData.duration;
-  document.getElementById("videoScanned").textContent = `${currentData.flags.length} flags`;
-  document.getElementById("flagCount").textContent = currentData.flags.length;
-  document.querySelector('.rc-tab[data-rc="flags"]').classList.toggle("has-danger", currentData.flags.some(f=>f.sev==="high"));
+  document.getElementById("videoTitle").textContent = currentData.title || "Untitled";
+  document.getElementById("videoChannel").textContent = currentData.channel || "Unknown";
+  document.getElementById("videoDuration").textContent = currentData.duration || "00:00";
+  document.getElementById("videoScanned").textContent = `${(currentData.flags || []).length} flags`;
+  document.getElementById("flagCount").textContent = (currentData.flags || []).length;
+  document.querySelector('.rc-tab[data-rc="flags"]').classList.toggle("has-danger", (currentData.flags || []).some(f=>f.sev==="high"));
   switchRc("flags");
 }
 
@@ -554,7 +534,7 @@ function switchRc(which){
 }
 
 function renderFlags(panel){
-  const flags = currentData.flags;
+  const flags = currentData.flags || [];
   if(flags.length===0){
     panel.innerHTML = `<div class="empty-state"><div class="big">✓</div>No flags detected.<br/><span style="font-size:13px">Transcript looks clean for rebroadcast.</span></div>`;
     return;
@@ -585,51 +565,75 @@ function renderFlags(panel){
 }
 
 function renderSummary(panel){
-  const flags = currentData.flags;
+  const flags = currentData.flags || [];
   let html = `<div class="panel-title">◆ SUMMARY</div><div class="summary-block">`;
-  if(currentData.summary){
+
+  if(currentData.summary && currentData.summary.trim()){
     html += `<p>${escapeHtml(currentData.summary)}</p>`;
   } else {
     const high = flags.filter(f=>f.sev==="high").length;
     html += `<p>Transcript spans <strong>${currentData.duration}</strong>. Scanner flagged <strong>${flags.length} moment${flags.length===1?"":"s"}</strong>${high>0?` including <strong>${high} high-severity</strong>`:""}.</p>`;
-    if(!currentData.aiEnabled) html += `<p style="font-size:13px;color:var(--ink-faint)">AI summary disabled — set ANTHROPIC_API_KEY in Railway to enable Claude-powered summaries.</p>`;
   }
+
   html += `</div><div class="panel-title">◆ KEY POINTS</div><ul class="key-points">`;
+
   const cats = {};
   flags.forEach(f=>{ cats[f.cat] = (cats[f.cat]||0)+1; });
+
   if(Object.keys(cats).length === 0){
-    html += `<li>No flag categories triggered — this video appears safe for rebroadcast.</li>`;
+    html += `<li>No flag categories triggered. Use the Transcript tab for clickable timestamp summaries and the Full Transcript tab for line-by-line text.</li>`;
   } else {
     for(const [cat,n] of Object.entries(cats)){
       html += `<li><strong style="color:var(--warn)">${n}×</strong> ${escapeHtml(cat)}</li>`;
     }
   }
+
   html += `</ul>`;
   panel.innerHTML = html;
 }
 
 function renderNotes(panel){
-  let html = `<div class="panel-title">✎ TIMESTAMPED NOTES</div><ul class="key-points">`;
+  let html = `<div class="panel-title">✎ TRANSCRIPT SUMMARY</div><ul class="key-points">`;
+
   const chunks = [];
-  for(let i=0;i<currentData.transcript.length;i+=4){
-    chunks.push(currentData.transcript.slice(i,i+4));
+  for(let i=0;i<currentData.transcript.length;i+=6){
+    chunks.push(currentData.transcript.slice(i,i+6));
   }
+
   for(const c of chunks){
     const first = c[0];
-    const note = c.map(l=>l.text).join(" ");
-    const condensed = note.length > 160 ? note.slice(0,160)+"…" : note;
-    html += `<li style="cursor:pointer" onclick="seekTo(${first.t})">
-      <span style="font-family:var(--font-mono);color:var(--accent);font-size:12px">▶ ${fmtTime(first.t)}</span>
-      <div style="margin-top:4px">${escapeHtml(condensed)}</div>
-    </li>`;
+    const last = c[c.length - 1];
+
+    const fullText = c.map(l=>l.text).join(" ").replace(/\s+/g," ").trim();
+
+    let condensed = fullText
+      .replace(/^(and|but|so|then|okay|ok|well|like)\s+/i, "")
+      .trim();
+
+    if(condensed.length > 150){
+      condensed = condensed.slice(0, 147).trimEnd() + "...";
+    }
+
+    const relatedFlags = (currentData.flags || []).filter(f => f.t >= first.t && f.t <= last.t);
+    const flagBadge = relatedFlags.length
+      ? ` <span style="color:var(--warn)">• ${relatedFlags.length} flag${relatedFlags.length===1?"":"s"}</span>`
+      : "";
+
+    html += `
+      <li style="cursor:pointer" onclick="seekTo(${first.t})">
+        <strong style="color:var(--accent)">${fmtTime(first.t)}${last.t !== first.t ? `–${fmtTime(last.t)}` : ""}</strong>${flagBadge}
+        <div style="margin-top:6px;color:var(--ink-dim)">${escapeHtml(condensed || "Transcript section")}</div>
+      </li>
+    `;
   }
-  html += `</ul><div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="exportNotes()">Copy Notes</button></div>`;
+
+  html += `</ul>`;
   panel.innerHTML = html;
 }
 
 function renderTranscript(panel){
   let html = `<div class="panel-title">⎘ FULL TRANSCRIPT</div>`;
-  const flaggedTimes = new Set(currentData.flags.map(f=>f.t));
+  const flaggedTimes = new Set((currentData.flags || []).map(f=>f.t));
   for(const line of currentData.transcript){
     const flagged = flaggedTimes.has(line.t);
     html += `<div class="transcript-line ${flagged?"flagged":""}" onclick="seekTo(${line.t})">
@@ -643,10 +647,10 @@ function renderTranscript(panel){
 function renderChat(panel){
   const hint = currentData.aiEnabled
     ? "Ask anything about this video. AI is live."
-    : "Chat needs AI — set ANTHROPIC_API_KEY in Railway variables.";
+    : "Chat is currently unavailable.";
   panel.innerHTML = `<div class="panel-title">◐ CHAT WITH VIDEO</div>
     <div class="chat-messages" id="chatMessages">
-      <div class="chat-msg bot">I've scanned ${currentData.transcript.length} lines and found ${currentData.flags.length} flags. ${hint}</div>
+      <div class="chat-msg bot">I've scanned ${currentData.transcript.length} lines and found ${(currentData.flags || []).length} flags. ${hint}</div>
     </div>
     <div class="chat-input-row">
       <input class="chat-input" id="chatInput" placeholder="e.g. Any copyrighted music? Any slurs?" onkeydown="if(event.key==='Enter')sendChat()" ${currentData.aiEnabled?"":"disabled"} />
@@ -684,25 +688,40 @@ function seekTo(seconds){
 }
 
 function exportFlags(){
-  if(!currentData || currentData.flags.length===0){ toast("Nothing to export"); return; }
-  const lines = [`StreamShield Flag Report — ${currentData.title}`,``];
-  currentData.flags.forEach(f=>{
-    lines.push(`[${fmtTime(f.t)}] ${f.sev.toUpperCase()} — ${f.cat}`);
-    lines.push(`  ${f.reason}`);
-    lines.push(`  "${f.quote}"`,``);
-  });
-  navigator.clipboard.writeText(lines.join("\n")).then(()=>toast("Report copied"));
+  const flags = currentData.flags || [];
+  if(!flags.length){
+    navigator.clipboard.writeText("No flags detected.");
+    toast("Copied clean report");
+    return;
+  }
+  const text = flags.map(f =>
+    `[${fmtTime(f.t)}] ${f.cat} (${f.sev})\nReason: ${f.reason}\nQuote: ${f.quote}\nSource: ${f.source || "rule"}`
+  ).join("\n\n");
+  navigator.clipboard.writeText(text);
+  toast("Copied report");
 }
 
-function exportNotes(){
-  const lines = [`Notes — ${currentData.title}`,``];
-  currentData.transcript.forEach(l=>lines.push(`[${fmtTime(l.t)}] ${l.text}`));
-  navigator.clipboard.writeText(lines.join("\n")).then(()=>toast("Notes copied"));
+function escapeHtml(str){
+  return String(str ?? "")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#39;");
 }
 
-function escapeHtml(s){return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function escapeReg(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
-function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2200);}
+function escapeReg(str){
+  return String(str ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+let toastTimer = null;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove("show"), 1800);
+}
 </script>
 </body>
 </html>
