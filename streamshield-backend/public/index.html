@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>StreamShield — ToS-aware YouTube analyzer for streamers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0910; --bg-2:#120f1a; --panel:#15121f; --panel-2:#1c1828;
+  --line:#2a2338; --ink:#f2ecff; --ink-dim:#a79bc2; --ink-faint:#6f6586;
+  --accent:#b084ff; --accent-2:#7c4dff; --warn:#ffb347; --danger:#ff5c7a; --ok:#6ee7b7;
+  --font-display:"Instrument Serif", Georgia, serif;
+  --font-mono:"Space Mono", ui-monospace, monospace;
+  --font-sans:"Geist", -apple-system, system-ui, sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);-webkit-font-smoothing:antialiased}
+body{background:radial-gradient(1200px 600px at 85% -10%, rgba(176,132,255,.12), transparent 60%),radial-gradient(900px 500px at -10% 30%, rgba(124,77,255,.08), transparent 60%),radial-gradient(700px 400px at 50% 120%, rgba(255,179,71,.06), transparent 60%),var(--bg);min-height:100vh}
+a{color:inherit}
+button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 28px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,9,16,.72);backdrop-filter:blur(12px);z-index:50}
+.brand{display:flex;align-items:center;gap:12px}
+.brand-mark{width:34px;height:34px;border-radius:10px;background:conic-gradient(from 210deg, var(--accent), var(--warn), var(--accent));position:relative;box-shadow:0 0 30px rgba(176,132,255,.35)}
+.brand-mark::after{content:"";position:absolute;inset:4px;border-radius:7px;background:var(--bg-2)}
+.brand-mark::before{content:"◈";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink);font-size:16px;z-index:2}
+.brand-name{font-family:var(--font-display);font-size:24px;letter-spacing:.2px}
+.brand-name em{color:var(--accent);font-style:italic}
+.tag{font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:1.6px;padding:4px 8px;border:1px solid var(--line);border-radius:999px;margin-left:10px}
+.tag.live{border-color:var(--ok);color:var(--ok)}
+.nav{display:flex;gap:22px;align-items:center}
+.nav a{font-size:13.5px;color:var(--ink-dim);text-decoration:none;transition:color .2s}
+.nav a:hover{color:var(--ink)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border-radius:10px;font-size:13.5px;font-weight:500;border:1px solid var(--line);background:var(--panel);transition:all .2s}
+.btn:hover{border-color:var(--accent);background:var(--panel-2)}
+.btn-primary{background:linear-gradient(135deg,var(--accent) 0%,var(--accent-2) 100%);border-color:transparent;color:#0b0910;font-weight:600}
+.btn-primary:hover{filter:brightness(1.1);border-color:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.hero{padding:72px 28px 40px;max-width:1200px;margin:0 auto;text-align:center;position:relative}
+.hero::before{content:"";position:absolute;top:40px;left:50%;transform:translateX(-50%);width:1px;height:32px;background:linear-gradient(180deg,transparent,var(--accent))}
+.hero .kicker{font-family:var(--font-mono);font-size:11px;letter-spacing:2.2px;text-transform:uppercase;color:var(--accent);margin-bottom:22px}
+.hero h1{font-family:var(--font-display);font-weight:400;font-size:clamp(44px,7vw,84px);line-height:.98;letter-spacing:-.01em;margin:0 0 22px}
+.hero h1 em{color:var(--warn);font-style:italic}
+.hero h1 .slash{color:var(--ink-faint);font-style:normal;margin:0 .1em}
+.hero p.lead{font-size:18px;line-height:1.55;max-width:640px;margin:0 auto 36px;color:var(--ink-dim)}
+.input-card{max-width:820px;margin:40px auto 0;padding:8px;background:linear-gradient(135deg,rgba(176,132,255,.2),rgba(255,179,71,.12));border-radius:20px;position:relative}
+.input-card-inner{background:var(--panel);border-radius:14px;padding:22px}
+.tabs{display:flex;gap:6px;margin-bottom:14px;font-family:var(--font-mono);font-size:11px;letter-spacing:1.2px;text-transform:uppercase}
+.tab{padding:7px 12px;border-radius:8px;color:var(--ink-faint);cursor:pointer;transition:all .2s}
+.tab.active{background:var(--panel-2);color:var(--ink)}
+.tab:hover:not(.active){color:var(--ink-dim)}
+.mode{display:none}
+.mode.active{display:block}
+.input-row{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+.input-url{flex:1;min-width:240px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;color:var(--ink);font-size:15px;font-family:var(--font-mono);transition:border-color .2s}
+.input-url:focus{outline:none;border-color:var(--accent)}
+.input-url::placeholder{color:var(--ink-faint)}
+.input-actions{display:flex;gap:10px;flex-wrap:wrap}
+.paste-area textarea{width:100%;min-height:180px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;color:var(--ink);font-size:13px;font-family:var(--font-mono);resize:vertical}
+.paste-area textarea:focus{outline:none;border-color:var(--accent)}
+.paste-hint{font-size:12px;color:var(--ink-faint);margin-top:8px;font-family:var(--font-mono);line-height:1.5}
+.paste-hint code{background:var(--bg);padding:2px 5px;border-radius:3px;color:var(--accent)}
+.paste-actions{margin-top:10px;display:flex;gap:10px;justify-content:flex-end}
+.loading-bar{display:none;margin-top:14px;padding:14px;background:var(--bg-2);border-radius:10px;font-family:var(--font-mono);font-size:12px;color:var(--ink-dim);text-align:center}
+.loading-bar.active{display:block}
+.loading-bar .dots::after{content:"";animation:dots 1.5s steps(4,end) infinite;display:inline-block;width:0;overflow:hidden;vertical-align:bottom}
+@keyframes dots{0%{width:0}100%{width:1.5em}}
+.workspace{display:none;max-width:1400px;margin:60px auto 80px;padding:0 28px;gap:24px}
+.workspace.active{display:grid;grid-template-columns:1fr 440px}
+@media(max-width:1024px){.workspace.active{grid-template-columns:1fr}}
+.video-wrap{aspect-ratio:16/9;background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.video-wrap iframe{width:100%;height:100%;border:0}
+.video-wrap .placeholder{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink-faint);font-family:var(--font-mono);font-size:13px;text-align:center;padding:20px;flex-direction:column;gap:8px}
+.video-wrap .placeholder .big{font-family:var(--font-display);font-size:32px;color:var(--ink-dim)}
+.video-meta{margin-top:18px;padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.video-meta h2{font-family:var(--font-display);font-size:26px;font-weight:400;margin:0 0 6px;line-height:1.2}
+.video-meta .byline{font-size:13px;color:var(--ink-dim);display:flex;gap:14px;flex-wrap:wrap;font-family:var(--font-mono)}
+.video-meta .byline span::before{content:"·";margin-right:14px;color:var(--ink-faint)}
+.video-meta .byline span:first-child::before{display:none}
+.right-col{display:flex;flex-direction:column}
+.rc-tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel);border-radius:14px 14px 0 0;padding:4px;gap:2px}
+.rc-tab{flex:1;padding:12px 10px;font-family:var(--font-mono);font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--ink-faint);border-radius:10px;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px}
+.rc-tab .count{display:inline-block;min-width:18px;padding:1px 6px;font-size:10px;background:var(--panel-2);border-radius:6px;color:var(--ink)}
+.rc-tab.active{background:var(--panel-2);color:var(--ink)}
+.rc-tab.has-danger .count{background:rgba(255,92,122,.2);color:var(--danger)}
+.rc-panel{background:var(--panel);border:1px solid var(--line);border-top:0;border-radius:0 0 14px 14px;padding:20px;min-height:520px;max-height:760px;overflow-y:auto}
+.rc-panel::-webkit-scrollbar{width:8px}
+.rc-panel::-webkit-scrollbar-thumb{background:var(--panel-2);border-radius:4px}
+.panel-title{font-family:var(--font-mono);font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+.summary-block{line-height:1.7;font-size:14.5px;color:var(--ink);margin-bottom:24px}
+.summary-block p{margin:0 0 14px}
+.summary-block strong{color:var(--warn);font-weight:600}
+.key-points{display:flex;flex-direction:column;gap:10px;padding:0;margin:0;list-style:none}
+.key-points li{padding:12px 14px;background:var(--bg-2);border-left:3px solid var(--accent);border-radius:6px;font-size:14px;line-height:1.5}
+.risk-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+.risk-box{padding:14px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;text-align:center}
+.risk-box .num{font-family:var(--font-display);font-size:32px;line-height:1}
+.risk-box .lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--ink-faint);margin-top:6px}
+.risk-box.high{border-color:rgba(255,92,122,.4)}
+.risk-box.high .num{color:var(--danger)}
+.risk-box.med{border-color:rgba(255,179,71,.4)}
+.risk-box.med .num{color:var(--warn)}
+.risk-box.low{border-color:rgba(110,231,183,.3)}
+.risk-box.low .num{color:var(--ok)}
+.flag{padding:14px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;transition:all .2s;cursor:pointer}
+.flag:hover{border-color:var(--accent);transform:translateX(2px)}
+.flag-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.flag-ts{font-family:var(--font-mono);font-size:13px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--panel-2)}
+.flag-sev{font-family:var(--font-mono);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;padding:3px 8px;border-radius:999px;font-weight:700}
+.sev-high{background:rgba(255,92,122,.15);color:var(--danger)}
+.sev-med{background:rgba(255,179,71,.15);color:var(--warn)}
+.sev-low{background:rgba(110,231,183,.15);color:var(--ok)}
+.flag-cat{font-size:13.5px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.flag-reason{font-size:13px;color:var(--ink-dim);line-height:1.5}
+.flag-quote{margin-top:8px;padding:8px 10px;background:var(--bg);border-left:2px solid var(--warn);font-family:var(--font-mono);font-size:12px;color:var(--ink-dim);border-radius:4px;font-style:italic}
+.flag-source{display:inline-block;font-family:var(--font-mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--panel-2);color:var(--ink-faint);margin-left:6px}
+.flag-source.ai{background:rgba(176,132,255,.15);color:var(--accent)}
+.transcript-line{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer;transition:background .2s;border-radius:4px}
+.transcript-line:hover{background:var(--bg-2);padding-left:8px;padding-right:8px}
+.transcript-ts{font-family:var(--font-mono);font-size:12px;color:var(--accent);flex-shrink:0;min-width:52px}
+.transcript-text{font-size:14px;line-height:1.5;color:var(--ink-dim)}
+.transcript-line.flagged .transcript-text{color:var(--warn)}
+.chat-messages{display:flex;flex-direction:column;gap:12px;margin-bottom:16px;min-height:320px}
+.chat-msg{padding:12px 14px;border-radius:10px;font-size:14px;line-height:1.5;max-width:90%}
+.chat-msg.user{background:var(--accent-2);color:white;align-self:flex-end;border-radius:10px 10px 2px 10px}
+.chat-msg.bot{background:var(--bg-2);border:1px solid var(--line);align-self:flex-start;border-radius:10px 10px 10px 2px;white-space:pre-wrap}
+.chat-input-row{display:flex;gap:8px}
+.chat-input{flex:1;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--ink);font-size:14px;font-family:var(--font-sans)}
+.chat-input:focus{outline:none;border-color:var(--accent)}
+.features{max-width:1200px;margin:80px auto;padding:0 28px}
+.features h3{font-family:var(--font-display);font-size:38px;font-weight:400;text-align:center;margin-bottom:8px}
+.features h3 em{color:var(--accent);font-style:italic}
+.features-sub{text-align:center;color:var(--ink-dim);margin-bottom:48px;font-size:15px}
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+.feat{padding:26px;background:var(--panel);border:1px solid var(--line);border-radius:14px;transition:all .3s;position:relative;overflow:hidden}
+.feat::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0;transition:opacity .3s}
+.feat:hover{border-color:var(--accent);transform:translateY(-4px)}
+.feat:hover::before{opacity:1}
+.feat-icon{width:42px;height:42px;border-radius:10px;background:var(--bg-2);display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:16px;border:1px solid var(--line)}
+.feat h4{font-family:var(--font-display);font-size:22px;font-weight:400;margin:0 0 8px}
+.feat p{font-size:14px;line-height:1.55;color:var(--ink-dim);margin:0}
+.foot{border-top:1px solid var(--line);padding:40px 28px;text-align:center;color:var(--ink-faint);font-size:13px}
+.empty-state{text-align:center;padding:60px 20px;color:var(--ink-faint)}
+.empty-state .big{font-family:var(--font-display);font-size:48px;color:var(--ink-dim);margin-bottom:12px}
+.error-box{margin-top:14px;padding:14px;background:rgba(255,92,122,.08);border:1px solid rgba(255,92,122,.3);border-radius:10px;font-size:13.5px;color:var(--danger);display:none}
+.error-box.active{display:block}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--accent);padding:12px 20px;border-radius:10px;font-size:14px;transition:transform .3s;z-index:100;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.kw{background:rgba(255,179,71,.15);color:var(--warn);padding:1px 4px;border-radius:3px;font-weight:600}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div><div class="brand-name">Stream<em>Shield</em></div></div>
+    <span class="tag" id="statusTag">v0.1</span>
+  </div>
+  <nav class="nav">
+    <a href="#features">Features</a>
+    <a href="#" onclick="document.getElementById('urlInput').focus();return false;">Try it</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="kicker">FOR STREAMERS · SAVE YOUR CHANNEL</div>
+  <h1>Catch the <em>flag</em> <span class="slash">/</span> before the strike.</h1>
+  <p class="lead">Paste a YouTube URL. Get a summary, timestamped notes, a full transcript — and a scan of every moment that could earn your stream a ToS violation if you replay it on air.</p>
+
+  <div class="input-card">
+    <div class="input-card-inner">
+      <div class="tabs">
+        <div class="tab active" data-tab="url" onclick="switchTab('url')">YouTube URL</div>
+        <div class="tab" data-tab="paste" onclick="switchTab('paste')">Paste Transcript</div>
+      </div>
+
+      <div class="mode active" id="mode-url">
+        <div class="input-row">
+          <input class="input-url" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." onkeydown="if(event.key==='Enter')analyzeUrl()" />
+          <div class="input-actions">
+            <button class="btn btn-primary" id="analyzeBtn" onclick="analyzeUrl()">Analyze →</button>
+          </div>
+        </div>
+        <div class="loading-bar" id="loadingBar">
+          <span id="loadingMsg">Fetching transcript</span><span class="dots"></span>
+        </div>
+      </div>
+
+      <div class="mode paste-area" id="mode-paste">
+        <textarea id="transcriptPaste" placeholder="Paste a YouTube transcript here.
+
+Supports YouTube Studio's 'Show transcript' format:
+  0:011 secondHello, welcome to my show
+  1:021 minute, 2 secondsAnd then I said...
+
+Or the simple timestamp format:
+  00:00 Welcome
+  01:23 Next section..."></textarea>
+        <div class="paste-hint">Tip: open any YouTube video → click <code>···</code> under the video → <code>Show transcript</code> → click to expand timestamps → select all and paste here. Runs entirely in your browser + AI backend if enabled.</div>
+        <div class="paste-actions">
+          <button class="btn" onclick="loadDemo()">Load Demo</button>
+          <button class="btn btn-primary" id="pasteBtn" onclick="analyzePaste()">Scan Transcript →</button>
+        </div>
+      </div>
+
+      <div class="error-box" id="errorBox"></div>
+    </div>
+  </div>
+</section>
+
+<section class="workspace" id="workspace">
+  <div class="left-col">
+    <div class="video-wrap" id="videoWrap"></div>
+    <div class="video-meta">
+      <h2 id="videoTitle">—</h2>
+      <div class="byline">
+        <span id="videoChannel">—</span>
+        <span id="videoDuration">—</span>
+        <span id="videoScanned">—</span>
+      </div>
+    </div>
+  </div>
+  <div class="right-col">
+    <div class="rc-tabs">
+      <button class="rc-tab active" data-rc="flags" onclick="switchRc('flags')">⚑ Flags <span class="count" id="flagCount">0</span></button>
+      <button class="rc-tab" data-rc="summary" onclick="switchRc('summary')">Summary</button>
+      <button class="rc-tab" data-rc="notes" onclick="switchRc('notes')">Notes</button>
+      <button class="rc-tab" data-rc="transcript" onclick="switchRc('transcript')">Script</button>
+      <button class="rc-tab" data-rc="chat" onclick="switchRc('chat')">Chat</button>
+    </div>
+    <div class="rc-panel" id="rcPanel"></div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <h3>Built for <em>creators</em> who stream.</h3>
+  <p class="features-sub">Every feature NoteGPT offers, plus the one they don't.</p>
+  <div class="feat-grid">
+    <div class="feat"><div class="feat-icon">⚑</div><h4>ToS Flag Scanner</h4><p>Rule-based + AI scan for copyrighted music, slurs, graphic content, gambling promo, doxxing, and more — with exact timestamps.</p></div>
+    <div class="feat"><div class="feat-icon">✦</div><h4>AI Summary</h4><p>Powered by Claude. Core topic, key points, tone, and rebroadcast risk — condensed so you can decide fast.</p></div>
+    <div class="feat"><div class="feat-icon">⌖</div><h4>Jump-to Timestamps</h4><p>Every flag and note is clickable. Tap and the player jumps straight there.</p></div>
+    <div class="feat"><div class="feat-icon">⎘</div><h4>Full Transcript</h4><p>Clean, line-by-line transcript with flagged segments highlighted inline. Copy, export, search instantly.</p></div>
+    <div class="feat"><div class="feat-icon">✎</div><h4>Smart Notes</h4><p>Auto-generated section notes you can paste into your stream outline.</p></div>
+    <div class="feat"><div class="feat-icon">◐</div><h4>Chat with Video</h4><p>Ask questions about the content. Get instant answers with timestamps.</p></div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div>Built as StreamShield · Not affiliated with YouTube, Twitch, or NoteGPT</div>
+</footer>
+
+<div class="toast" id="toast">Copied</div>
+
+<script>
+let currentData = null;
+let aiEnabled = false;
+
+// Check backend status on load
+fetch("/api/health").then(r=>r.json()).then(d=>{
+  aiEnabled = !!d.ai;
+  const tag = document.getElementById("statusTag");
+  if(d.ai){ tag.textContent = "AI · LIVE"; tag.classList.add("live"); }
+  else { tag.textContent = "RULE-BASED"; }
+}).catch(()=>{ document.getElementById("statusTag").textContent = "OFFLINE"; });
+
+function fmtTime(s){
+  s = Math.floor(s);
+  const m = Math.floor(s/60), ss = s%60;
+  return `${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
+}
+
+function switchTab(which){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===which));
+  document.querySelectorAll(".mode").forEach(m=>m.classList.remove("active"));
+  document.getElementById("mode-"+which).classList.add("active");
+  document.getElementById("errorBox").classList.remove("active");
+}
+
+// ============================================================
+// URL MODE — calls backend /api/analyze
+// ============================================================
+async function analyzeUrl(){
+  const url = document.getElementById("urlInput").value.trim();
+  if(!url){ showError("Enter a YouTube URL first"); return; }
+
+  const btn = document.getElementById("analyzeBtn");
+  const loader = document.getElementById("loadingBar");
+  const loadMsg = document.getElementById("loadingMsg");
+  const err = document.getElementById("errorBox");
+
+  btn.disabled = true;
+  loader.classList.add("active");
+  err.classList.remove("active");
+  loadMsg.textContent = "Fetching transcript";
+
+  const msgs = ["Fetching transcript", "Pulling metadata", "Running flag scanner", "Analyzing with AI"];
+  let i = 0;
+  const interval = setInterval(()=>{ i=(i+1)%msgs.length; loadMsg.textContent = msgs[i]; }, 2000);
+
+  try {
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    clearInterval(interval);
+    if(!res.ok){ throw new Error(data.error || "Analysis failed"); }
+    currentData = data;
+    renderWorkspace();
+    document.getElementById("workspace").scrollIntoView({behavior:"smooth"});
+  } catch(e){
+    clearInterval(interval);
+    showError(e.message);
+  } finally {
+    btn.disabled = false;
+    loader.classList.remove("active");
+  }
+}
+
+// ============================================================
+// PASTE MODE — client-side parse + local scan, optionally
+// enriched via backend AI (/api/ai-scan)
+// ============================================================
+async function analyzePaste(){
+  const raw = document.getElementById("transcriptPaste").value.trim();
+  if(!raw){ showError("Paste a transcript first"); return; }
+
+  const btn = document.getElementById("pasteBtn");
+  btn.disabled = true;
+  document.getElementById("errorBox").classList.remove("active");
+
+  try {
+    const transcript = parsePastedTranscript(raw);
+    if(transcript.length === 0){
+      showError("Couldn't find any timestamped lines. Make sure every line starts with a timestamp like 0:00, 00:00, or 1:02. See the example in the placeholder.");
+      return;
+    }
+
+    // Local rule-based scan
+    let flags = ruleBasedScan(transcript);
+    let summary = null;
+
+    // Optional AI enrichment via backend
+    if(aiEnabled){
+      try {
+        const res = await fetch("/api/ai-scan", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ transcript }),
+        });
+        if(res.ok){
+          const data = await res.json();
+          summary = data.summary;
+          // Merge AI flags
+          const seen = new Set(flags.map(f => `${Math.floor(f.t/10)}_${f.cat}`));
+          for(const f of (data.flags || [])){
+            const key = `${Math.floor(f.t/10)}_${f.cat}`;
+            if(!seen.has(key)){
+              flags.push({ ...f, source: "ai" });
+              seen.add(key);
+            }
+          }
+          flags.sort((a,b) => a.t - b.t);
+        }
+      } catch(e){ console.warn("AI scan failed, using rule-based only:", e); }
+    }
+
+    const duration = fmtTime(transcript[transcript.length-1].t);
+    currentData = {
+      videoId: null,
+      title: "Pasted Transcript",
+      channel: "—",
+      duration,
+      transcript,
+      flags,
+      summary,
+      aiEnabled,
+    };
+    renderWorkspace();
+    document.getElementById("workspace").scrollIntoView({behavior:"smooth"});
+  } catch(e){
+    showError(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Robust parser — handles YouTube Studio's "Show transcript" format with glued
+// descriptors ("1 minuteSo...") AND the simple "MM:SS text" format AND [MM:SS]
+function parsePastedTranscript(raw) {
+  const out = [];
+  const lines = raw.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const tsMatch = line.match(/^\[?(\d{1,2}):(\d{2})(?::(\d{2}))?\]?(.*)$/);
+    if (!tsMatch) continue;
+    const h = tsMatch[3] ? parseInt(tsMatch[1], 10) : 0;
+    const m = tsMatch[3] ? parseInt(tsMatch[2], 10) : parseInt(tsMatch[1], 10);
+    const s = tsMatch[3] ? parseInt(tsMatch[3], 10) : parseInt(tsMatch[2], 10);
+    let rest = tsMatch[4];
+    // Peel the YouTube duration descriptor ("1 minute", ", 6 seconds", etc.).
+    // Case-sensitive 's?' so we don't eat a capital 'S' from real transcript text.
+    while (true) {
+      const m2 = rest.match(/^(?:\s*,?\s*)(\d+)\s*(hour|minute|second)(s?)(.*)$/);
+      if (!m2) break;
+      rest = m2[4];
+    }
+    rest = rest.trim();
+    if (rest) out.push({ t: h * 3600 + m * 60 + s, text: rest });
+  }
+  return out;
+}
+
+// ============================================================
+// Demo data — for the "Load Demo" button in paste mode
+// ============================================================
+const DEMO_TRANSCRIPT = `0:011 secondWelcome back to the stream gang smash that like button
+0:1515 secondsTonight we're diving into ten moments that broke the internet
+0:3232 secondsStarting off strong this is that viral clip where the streamer played the full new Drake track on air
+1:081 minute, 8 secondsObviously I can't play that here because of copyright but you get the idea
+1:351 minute, 35 secondsNumber nine a politician said some wild things about the election being rigged
+2:102 minutes, 10 secondsNumber eight a clip from Breaking Bad where Walt has a full breakdown
+3:303 minutes, 30 secondsIf you wanna see the whole episode I'll link a sketchy streaming site in the description just don't tell Netflix
+4:084 minutes, 8 secondsNumber seven is from a sponsor use code LUCKY at this online casino for a bonus easy money guaranteed
+4:554 minutes, 55 secondsNumber six someone claimed drinking bleach cures migraines obviously dangerous do not do this
+5:405 minutes, 40 secondsNumber five a fighter lost his mind and slurs were used let's just say
+6:356 minutes, 35 secondsFour a prank video where someone faked their own death on stream genuinely disturbing stuff
+7:257 minutes, 25 secondsNumber three a clip from the latest Marvel movie showing the whole ending scene
+8:128 minutes, 12 secondsHit me up on Discord if you want the leaked screener link
+8:508 minutes, 50 secondsTwo someone got doxxed live their home address was read out on stream
+9:309 minutes, 30 secondsAnd number one a full minecraft speedrun with copyrighted music the whole soundtrack was Taylor Swift
+10:2010 minutes, 20 secondsThat's the list drop what I missed in the comments peace`;
+
+function loadDemo(){
+  document.getElementById("transcriptPaste").value = DEMO_TRANSCRIPT;
+  toast("Demo transcript loaded — click Scan Transcript");
+}
+
+// ============================================================
+// Rule-based scanner (same rules as backend, client-side for paste mode)
+// ============================================================
+const FLAG_RULES = [
+  { cat:"Copyrighted Music (DMCA risk)", sev:"high",
+    patterns:[/\b(drake|taylor swift|kanye|beyonc|the weeknd|ariana|bad bunny|bts|billie eilish|post malone|kendrick|sza|olivia rodrigo|dua lipa|ed sheeran|justin bieber|rihanna|eminem)\b/i,
+              /\b(copyrighted|copyright) (music|song|track|audio)\b/i,
+              /\b(full (song|track|album)|whole soundtrack|plays? the (entire|full|whole) song)\b/i],
+    reason:"Reference to named major-label artists or full-track playback. Broadcasting copyrighted music on stream is a DMCA/ContentID trigger." },
+  { cat:"Copyrighted Video Content (DMCA risk)", sev:"high",
+    patterns:[/\b(breaking bad|game of thrones|marvel movie|netflix|disney|hbo|hulu|paramount|peacock)\b/i,
+              /\b(full (episode|scene|clip)|whole ending|entire episode)\b/i,
+              /\b(screener|leaked (clip|episode|movie|screener))\b/i],
+    reason:"Reference to full episodes/scenes from copyrighted TV/film. Rebroadcasting is a takedown trigger." },
+  { cat:"Piracy / Illegal Streaming Links", sev:"high",
+    patterns:[/\b(sketchy|illegal|pirat|free stream(ing)?) (site|link|website)\b/i,
+              /\b(link in (the )?description|dm me for (the )?link|leaked.*link)\b/i,
+              /\b(just don'?t tell (netflix|disney|hbo|the studio))\b/i],
+    reason:"Promotion of piracy or off-platform sharing of infringing content. Direct ToS violation." },
+  { cat:"Slurs / Hate Speech", sev:"high",
+    patterns:[/\b(slurs?) (were used|thrown around|dropped|said)\b/i,/\bracial slur\b/i,
+              /\b(n-word|r-word|f-word used as slur)\b/i,
+              /\b(said some (stuff|things) i can'?t repeat)\b/i],
+    reason:"Indication that slurs occur in this segment. Even reacting/quoting can trigger a channel-level strike." },
+  { cat:"Harmful / Dangerous Content", sev:"high",
+    patterns:[/\b(bleach|drinking bleach|eating tide pods?|choking (game|challenge))\b.*\b(cure|heal|fix|help|work)\b/i,
+              /\b(suicide|self[- ]harm) (method|how to|guide|tutorial)\b/i,
+              /\bfaked (his|her|their) (own )?death\b/i,
+              /\b(dangerous|lethal|toxic|poisonous)\b.*\b(don'?t try|do not do this|genuinely disturbing)\b/i],
+    reason:"Potentially unsafe content. Rebroadcast risks a strike for harmful/dangerous acts." },
+  { cat:"Gambling Promo (regional restriction)", sev:"med",
+    patterns:[/\b(online )?casino\b/i,/\b(bet|betting|gambling) (site|platform|sponsor)\b/i,
+              /\b(promo|bonus) code\b.*\b(cash|win|deposit|casino|bet)\b/i,
+              /\b(easy money|guaranteed (win|return|payout))\b/i],
+    reason:"Gambling sponsor promotion. Category restrictions on Twitch + age-gating required on YouTube." },
+  { cat:"Doxxing / Private Info", sev:"high",
+    patterns:[/\b(doxx?ed|doxx?ing)\b/i,
+              /\b(home |street )?address (was )?(read out|leaked|shown|revealed)\b/i,
+              /\b(personal (info|information|details)) (leaked|exposed|shown)\b/i,
+              /\b(phone number|social security) (leaked|shown|read)\b/i],
+    reason:"Reference to revealing private information. Any rebroadcast is an instant-strike category." },
+  { cat:"Election / Political Misinfo", sev:"med",
+    patterns:[/\b(rigged|stolen|fraudulent) election\b/i,
+              /\b(unverified|unproven) (claim|allegation)s?\b/i,
+              /\b(conspiracy|qanon|deep state)\b/i],
+    reason:"Election integrity claims are under elevated moderation. Unchallenged rebroadcasts can be flagged." },
+  { cat:"Graphic Violence / Shock", sev:"med",
+    patterns:[/\b(gore|graphic|violent|brutal) (footage|clip|video|scene)\b/i,
+              /\b(disturbing|genuinely disturbing|not safe for work|nsfw)\b/i,
+              /\b(death on stream|murder|killed (live|on stream))\b/i],
+    reason:"Graphic or shock content. Rebroadcast may trigger age restriction or demonetization." },
+  { cat:"Adult / Sexual Content", sev:"med",
+    patterns:[/\b(nude|nudity|sexual (content|act)|porn|pornograph)\b/i,
+              /\b(onlyfans|adult content)\b/i,/\bnsfw\b/i],
+    reason:"Adult content reference. Rebroadcast would violate sexual content policies across platforms." },
+];
+
+function ruleBasedScan(transcript){
+  const flags = [];
+  for(const line of transcript){
+    for(const rule of FLAG_RULES){
+      for(const pat of rule.patterns){
+        const m = line.text.match(pat);
+        if(m){
+          flags.push({
+            t: line.t, cat: rule.cat, sev: rule.sev,
+            reason: rule.reason, quote: line.text, match: m[0], source: "rule",
+          });
+          break;
+        }
+      }
+    }
+  }
+  return flags;
+}
+
+function showError(msg){
+  const err = document.getElementById("errorBox");
+  err.textContent = "⚠ " + msg;
+  err.classList.add("active");
+}
+
+// ============================================================
+// Rendering
+// ============================================================
+function renderWorkspace(){
+  document.getElementById("workspace").classList.add("active");
+  const wrap = document.getElementById("videoWrap");
+  if(currentData.videoId){
+    wrap.innerHTML = `<iframe id="ytframe" src="https://www.youtube.com/embed/${currentData.videoId}?enablejsapi=1" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+  } else {
+    wrap.innerHTML = `<div class="placeholder"><div class="big">⎘</div>Pasted transcript mode<br/><span style="opacity:.6">No video preview</span></div>`;
+  }
+  document.getElementById("videoTitle").textContent = currentData.title;
+  document.getElementById("videoChannel").textContent = currentData.channel;
+  document.getElementById("videoDuration").textContent = currentData.duration;
+  document.getElementById("videoScanned").textContent = `${currentData.flags.length} flags`;
+  document.getElementById("flagCount").textContent = currentData.flags.length;
+  document.querySelector('.rc-tab[data-rc="flags"]').classList.toggle("has-danger", currentData.flags.some(f=>f.sev==="high"));
+  switchRc("flags");
+}
+
+function switchRc(which){
+  document.querySelectorAll(".rc-tab").forEach(t=>t.classList.toggle("active",t.dataset.rc===which));
+  const panel = document.getElementById("rcPanel");
+  panel.innerHTML = "";
+  if(which==="flags") renderFlags(panel);
+  else if(which==="summary") renderSummary(panel);
+  else if(which==="notes") renderNotes(panel);
+  else if(which==="transcript") renderTranscript(panel);
+  else if(which==="chat") renderChat(panel);
+}
+
+function renderFlags(panel){
+  const flags = currentData.flags;
+  if(flags.length===0){
+    panel.innerHTML = `<div class="empty-state"><div class="big">✓</div>No flags detected.<br/><span style="font-size:13px">Transcript looks clean for rebroadcast.</span></div>`;
+    return;
+  }
+  const high = flags.filter(f=>f.sev==="high").length;
+  const med = flags.filter(f=>f.sev==="med").length;
+  const low = flags.filter(f=>f.sev==="low").length;
+  let html = `<div class="panel-title">⚑ REACTION RISK REPORT</div>
+    <div class="risk-summary">
+      <div class="risk-box high"><div class="num">${high}</div><div class="lbl">High</div></div>
+      <div class="risk-box med"><div class="num">${med}</div><div class="lbl">Medium</div></div>
+      <div class="risk-box low"><div class="num">${low}</div><div class="lbl">Low</div></div>
+    </div>`;
+  for(const f of flags){
+    const quote = f.match ? f.quote.replace(new RegExp(`(${escapeReg(f.match)})`,"i"),'<span class="kw">$1</span>') : escapeHtml(f.quote);
+    html += `<div class="flag" onclick="seekTo(${f.t})">
+      <div class="flag-head">
+        <span class="flag-ts">▶ ${fmtTime(f.t)}</span>
+        <span class="flag-sev sev-${f.sev}">${f.sev}</span>
+      </div>
+      <div class="flag-cat">${escapeHtml(f.cat)}<span class="flag-source ${f.source==="ai"?"ai":""}">${f.source||"rule"}</span></div>
+      <div class="flag-reason">${escapeHtml(f.reason)}</div>
+      <div class="flag-quote">"${quote}"</div>
+    </div>`;
+  }
+  html += `<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="exportFlags()">Copy Report</button></div>`;
+  panel.innerHTML = html;
+}
+
+function renderSummary(panel){
+  const flags = currentData.flags;
+  let html = `<div class="panel-title">◆ SUMMARY</div><div class="summary-block">`;
+  if(currentData.summary){
+    html += `<p>${escapeHtml(currentData.summary)}</p>`;
+  } else {
+    const high = flags.filter(f=>f.sev==="high").length;
+    html += `<p>Transcript spans <strong>${currentData.duration}</strong>. Scanner flagged <strong>${flags.length} moment${flags.length===1?"":"s"}</strong>${high>0?` including <strong>${high} high-severity</strong>`:""}.</p>`;
+    if(!currentData.aiEnabled) html += `<p style="font-size:13px;color:var(--ink-faint)">AI summary disabled — set ANTHROPIC_API_KEY in Railway to enable Claude-powered summaries.</p>`;
+  }
+  html += `</div><div class="panel-title">◆ KEY POINTS</div><ul class="key-points">`;
+  const cats = {};
+  flags.forEach(f=>{ cats[f.cat] = (cats[f.cat]||0)+1; });
+  if(Object.keys(cats).length === 0){
+    html += `<li>No flag categories triggered — this video appears safe for rebroadcast.</li>`;
+  } else {
+    for(const [cat,n] of Object.entries(cats)){
+      html += `<li><strong style="color:var(--warn)">${n}×</strong> ${escapeHtml(cat)}</li>`;
+    }
+  }
+  html += `</ul>`;
+  panel.innerHTML = html;
+}
+
+function renderNotes(panel){
+  let html = `<div class="panel-title">✎ TIMESTAMPED NOTES</div><ul class="key-points">`;
+  const chunks = [];
+  for(let i=0;i<currentData.transcript.length;i+=4){
+    chunks.push(currentData.transcript.slice(i,i+4));
+  }
+  for(const c of chunks){
+    const first = c[0];
+    const note = c.map(l=>l.text).join(" ");
+    const condensed = note.length > 160 ? note.slice(0,160)+"…" : note;
+    html += `<li style="cursor:pointer" onclick="seekTo(${first.t})">
+      <span style="font-family:var(--font-mono);color:var(--accent);font-size:12px">▶ ${fmtTime(first.t)}</span>
+      <div style="margin-top:4px">${escapeHtml(condensed)}</div>
+    </li>`;
+  }
+  html += `</ul><div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="exportNotes()">Copy Notes</button></div>`;
+  panel.innerHTML = html;
+}
+
+function renderTranscript(panel){
+  let html = `<div class="panel-title">⎘ FULL TRANSCRIPT</div>`;
+  const flaggedTimes = new Set(currentData.flags.map(f=>f.t));
+  for(const line of currentData.transcript){
+    const flagged = flaggedTimes.has(line.t);
+    html += `<div class="transcript-line ${flagged?"flagged":""}" onclick="seekTo(${line.t})">
+      <div class="transcript-ts">${fmtTime(line.t)}</div>
+      <div class="transcript-text">${flagged?"⚑ ":""}${escapeHtml(line.text)}</div>
+    </div>`;
+  }
+  panel.innerHTML = html;
+}
+
+function renderChat(panel){
+  const hint = currentData.aiEnabled
+    ? "Ask anything about this video. AI is live."
+    : "Chat needs AI — set ANTHROPIC_API_KEY in Railway variables.";
+  panel.innerHTML = `<div class="panel-title">◐ CHAT WITH VIDEO</div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-msg bot">I've scanned ${currentData.transcript.length} lines and found ${currentData.flags.length} flags. ${hint}</div>
+    </div>
+    <div class="chat-input-row">
+      <input class="chat-input" id="chatInput" placeholder="e.g. Any copyrighted music? Any slurs?" onkeydown="if(event.key==='Enter')sendChat()" ${currentData.aiEnabled?"":"disabled"} />
+      <button class="btn btn-primary" onclick="sendChat()" ${currentData.aiEnabled?"":"disabled"}>Send</button>
+    </div>`;
+}
+
+async function sendChat(){
+  const inp = document.getElementById("chatInput");
+  const q = inp.value.trim();
+  if(!q) return;
+  inp.value = "";
+  const msgs = document.getElementById("chatMessages");
+  msgs.insertAdjacentHTML("beforeend",`<div class="chat-msg user">${escapeHtml(q)}</div>`);
+  const thinking = document.createElement("div");
+  thinking.className = "chat-msg bot"; thinking.textContent = "Thinking…";
+  msgs.appendChild(thinking); msgs.scrollTop = msgs.scrollHeight;
+  try{
+    const res = await fetch("/api/chat",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ question:q, transcript:currentData.transcript, flags:currentData.flags }),
+    });
+    const data = await res.json();
+    thinking.textContent = data.answer || data.error || "No response.";
+  } catch(e){ thinking.textContent = "Error: " + e.message; }
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function seekTo(seconds){
+  const iframe = document.getElementById("ytframe");
+  if(!iframe){ toast(`→ ${fmtTime(seconds)} (no video loaded)`); return; }
+  iframe.contentWindow.postMessage(JSON.stringify({event:"command",func:"seekTo",args:[seconds,true]}),"*");
+  iframe.contentWindow.postMessage(JSON.stringify({event:"command",func:"playVideo",args:[]}),"*");
+  toast(`Jumped to ${fmtTime(seconds)}`);
+}
+
+function exportFlags(){
+  if(!currentData || currentData.flags.length===0){ toast("Nothing to export"); return; }
+  const lines = [`StreamShield Flag Report — ${currentData.title}`,``];
+  currentData.flags.forEach(f=>{
+    lines.push(`[${fmtTime(f.t)}] ${f.sev.toUpperCase()} — ${f.cat}`);
+    lines.push(`  ${f.reason}`);
+    lines.push(`  "${f.quote}"`,``);
+  });
+  navigator.clipboard.writeText(lines.join("\n")).then(()=>toast("Report copied"));
+}
+
+function exportNotes(){
+  const lines = [`Notes — ${currentData.title}`,``];
+  currentData.transcript.forEach(l=>lines.push(`[${fmtTime(l.t)}] ${l.text}`));
+  navigator.clipboard.writeText(lines.join("\n")).then(()=>toast("Notes copied"));
+}
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function escapeReg(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2200);}
+</script>
+</body>
+</html>

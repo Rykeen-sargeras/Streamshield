@@ -1,0 +1,17 @@
+{
+  "name": "streamshield",
+  "version": "1.0.0",
+  "description": "NoteGPT-style YouTube analyzer with streamer ToS flag detection",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "express": "^4.21.2"
+  }
+}
