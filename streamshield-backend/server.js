@@ -363,6 +363,10 @@ async function callGemini(prompt) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
       }),
     }
   );
@@ -382,11 +386,15 @@ async function aiScan(transcript) {
   const joined = transcript
     .map((l) => `[${l.t}] ${l.text}`)
     .join("\n")
-    .slice(0, 40000);
+    .slice(0, 30000);
 
   const prompt = `You are a YouTube/Twitch compliance reviewer helping a streamer decide whether they can safely replay a YouTube video on their live stream.
 
-Return ONLY valid JSON in exactly this format:
+Return ONLY valid JSON.
+Do not use markdown fences.
+Do not include explanation before or after the JSON.
+
+Use exactly this schema:
 {
   "summary": "2-3 sentence overview of the video and its rebroadcast risk",
   "flags": [
@@ -400,26 +408,43 @@ Return ONLY valid JSON in exactly this format:
   ]
 }
 
-Use only sev values: "high", "med", or "low".
-If there are no additional risks, return an empty flags array.
+Rules:
+- "summary" must always be present and non-empty
+- Use only sev values: "high", "med", or "low"
+- If there are no additional risks, return an empty flags array
+- Keep the summary concise and useful
 
 Transcript:
 ${joined}`;
 
   try {
     const text = await callGemini(prompt);
-    const cleaned = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
-    const parsed = JSON.parse(cleaned);
+    if (!text) throw new Error("Gemini returned empty text");
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text.trim());
+    } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Gemini did not return parseable JSON");
+      parsed = JSON.parse(match[0]);
+    }
 
     return {
       flags: Array.isArray(parsed.flags)
         ? parsed.flags.map((f) => ({ ...f, source: "ai" }))
         : [],
-      summary: parsed.summary || null,
+      summary:
+        typeof parsed.summary === "string" && parsed.summary.trim()
+          ? parsed.summary.trim()
+          : "AI reviewed the transcript but did not return a usable summary.",
     };
   } catch (err) {
     console.error("Gemini scan failed:", err.message);
-    return { flags: [], summary: null };
+    return {
+      flags: [],
+      summary: "AI summary is temporarily unavailable. Showing rule-based scan results only.",
+    };
   }
 }
 
