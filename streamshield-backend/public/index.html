@@ -168,7 +168,7 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
 <section class="hero">
   <div class="kicker">FOR STREAMERS · SAVE YOUR CHANNEL</div>
   <h1>Catch the <em>flag</em> <span class="slash">/</span> before the strike.</h1>
-  <p class="lead">Paste a YouTube URL. Get a summary, timestamped notes, a full transcript — and a scan of every moment that could earn your stream a ToS violation if you replay it on air.</p>
+  <p class="lead">Paste a YouTube URL. Get a summary, timestamped transcript summaries, a full transcript — and a scan of every moment that could earn your stream a ToS violation if you replay it on air.</p>
 
   <div class="input-card">
     <div class="input-card-inner">
@@ -192,14 +192,9 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
       <div class="mode paste-area" id="mode-paste">
         <textarea id="transcriptPaste" placeholder="Paste a YouTube transcript here.
 
-Supports YouTube Studio's 'Show transcript' format:
-  0:011 secondHello, welcome to my show
-  1:021 minute, 2 secondsAnd then I said...
-
-Or the simple timestamp format:
-  00:00 Welcome
-  01:23 Next section..."></textarea>
-        <div class="paste-hint">Tip: open any YouTube video → click <code>···</code> under the video → <code>Show transcript</code> → click to expand timestamps → select all and paste here. Runs entirely in your browser + AI backend if enabled.</div>
+Supports timestamped lines such as:
+00:00 Welcome
+01:23 Next section..."></textarea>
         <div class="paste-actions">
           <button class="btn" onclick="loadDemo()">Load Demo</button>
           <button class="btn btn-primary" id="pasteBtn" onclick="analyzePaste()">Scan Transcript →</button>
@@ -237,14 +232,14 @@ Or the simple timestamp format:
 
 <section class="features" id="features">
   <h3>Built for <em>creators</em> who stream.</h3>
-  <p class="features-sub">Every feature NoteGPT offers, plus the one they don't.</p>
+  <p class="features-sub">Summaries that tell you what the stream is actually about.</p>
   <div class="feat-grid">
     <div class="feat"><div class="feat-icon">⚑</div><h4>ToS Flag Scanner</h4><p>Rule-based + AI scan for copyrighted music, slurs, graphic content, gambling promo, doxxing, and more — with exact timestamps.</p></div>
-    <div class="feat"><div class="feat-icon">✦</div><h4>AI Summary</h4><p>Powered by Gemini. Core topic, key points, tone, and rebroadcast risk — condensed so you can decide fast.</p></div>
+    <div class="feat"><div class="feat-icon">✦</div><h4>Real Stream Summary</h4><p>Uses timestamped sections so the summary covers the actual stream topic, not just the opening sentence.</p></div>
     <div class="feat"><div class="feat-icon">⌖</div><h4>Jump-to Timestamps</h4><p>Every flag and transcript summary row is clickable. Tap and the player jumps straight there.</p></div>
     <div class="feat"><div class="feat-icon">⎘</div><h4>Full Transcript</h4><p>Clean, line-by-line transcript with flagged segments highlighted inline. Copy, export, search instantly.</p></div>
     <div class="feat"><div class="feat-icon">✎</div><h4>Transcript Summaries</h4><p>Readable timestamp summaries so you know what you are clicking before you jump.</p></div>
-    <div class="feat"><div class="feat-icon">◐</div><h4>Chat with Video</h4><p>Ask questions about the content. Get instant answers with timestamps.</p></div>
+    <div class="feat"><div class="feat-icon">◐</div><h4>Chat with Video</h4><p>Ask questions about the stream using the section outline instead of the giant raw transcript.</p></div>
   </div>
 </section>
 
@@ -258,7 +253,6 @@ Or the simple timestamp format:
 let currentData = null;
 let aiEnabled = false;
 
-// Check backend status on load
 fetch("/api/health").then(r=>r.json()).then(d=>{
   aiEnabled = !!d.ai;
   const tag = document.getElementById("statusTag");
@@ -296,9 +290,9 @@ async function analyzeUrl(){
   err.classList.remove("active");
   loadMsg.textContent = "Fetching transcript";
 
-  const msgs = ["Fetching transcript", "Pulling metadata", "Running flag scanner", "Analyzing with AI"];
+  const msgs = ["Fetching transcript", "Pulling metadata", "Building sections", "Analyzing with AI"];
   let i = 0;
-  const interval = setInterval(()=>{ i=(i+1)%msgs.length; loadMsg.textContent = msgs[i]; }, 2000);
+  const interval = setInterval(()=>{ i=(i+1)%msgs.length; loadMsg.textContent = msgs[i]; }, 1800);
 
   try {
     const res = await fetch("/api/analyze", {
@@ -332,12 +326,13 @@ async function analyzePaste(){
   try {
     const transcript = parsePastedTranscript(raw);
     if(transcript.length === 0){
-      showError("Couldn't find any timestamped lines. Make sure every line starts with a timestamp like 0:00, 00:00, or 1:02. See the example in the placeholder.");
+      showError("Couldn't find any timestamped lines. Make sure each line starts with a timestamp like 0:00 or 01:23.");
       return;
     }
 
     let flags = ruleBasedScan(transcript);
     let summary = null;
+    let sections = buildLocalSections(transcript, 12);
 
     if(aiEnabled){
       try {
@@ -348,15 +343,8 @@ async function analyzePaste(){
         if(res.ok){
           const data = await res.json();
           summary = data.summary;
-          const seen = new Set(flags.map(f => `${Math.floor(f.t/10)}_${f.cat}`));
-          for(const f of (data.flags || [])){
-            const key = `${Math.floor(f.t/10)}_${f.cat}`;
-            if(!seen.has(key)){
-              flags.push({ ...f, source: "ai" });
-              seen.add(key);
-            }
-          }
-          flags.sort((a,b) => a.t - b.t);
+          sections = Array.isArray(data.sections) && data.sections.length ? data.sections : sections;
+          flags = Array.isArray(data.flags) ? data.flags : flags;
         }
       } catch(e){ console.warn("AI scan failed, using rule-based only:", e); }
     }
@@ -369,6 +357,7 @@ async function analyzePaste(){
       duration,
       transcript,
       flags,
+      sections,
       summary,
       aiEnabled,
     };
@@ -392,38 +381,23 @@ function parsePastedTranscript(raw) {
     const h = tsMatch[3] ? parseInt(tsMatch[1], 10) : 0;
     const m = tsMatch[3] ? parseInt(tsMatch[2], 10) : parseInt(tsMatch[1], 10);
     const s = tsMatch[3] ? parseInt(tsMatch[3], 10) : parseInt(tsMatch[2], 10);
-    let rest = tsMatch[4];
-    while (true) {
-      const m2 = rest.match(/^(?:\s*,?\s*)(\d+)\s*(hour|minute|second)(s?)(.*)$/);
-      if (!m2) break;
-      rest = m2[4];
-    }
-    rest = rest.trim();
+    let rest = tsMatch[4].trim();
     if (rest) out.push({ t: h * 3600 + m * 60 + s, text: rest });
   }
   return out;
 }
 
-const DEMO_TRANSCRIPT = `0:011 secondWelcome back to the stream gang smash that like button
-0:1515 secondsTonight we're diving into ten moments that broke the internet
-0:3232 secondsStarting off strong this is that viral clip where the streamer played the full new Drake track on air
-1:081 minute, 8 secondsObviously I can't play that here because of copyright but you get the idea
-1:351 minute, 35 secondsNumber nine a politician said some wild things about the election being rigged
-2:102 minutes, 10 secondsNumber eight a clip from Breaking Bad where Walt has a full breakdown
-3:303 minutes, 30 secondsIf you wanna see the whole episode I'll link a sketchy streaming site in the description just don't tell Netflix
-4:084 minutes, 8 secondsNumber seven is from a sponsor use code LUCKY at this online casino for a bonus easy money guaranteed
-4:554 minutes, 55 secondsNumber six someone claimed drinking bleach cures migraines obviously dangerous do not do this
-5:405 minutes, 40 secondsNumber five a fighter lost his mind and slurs were used let's just say
-6:356 minutes, 35 secondsFour a prank video where someone faked their own death on stream genuinely disturbing stuff
-7:257 minutes, 25 secondsNumber three a clip from the latest Marvel movie showing the whole ending scene
-8:128 minutes, 12 secondsHit me up on Discord if you want the leaked screener link
-8:508 minutes, 50 secondsTwo someone got doxxed live their home address was read out on stream
-9:309 minutes, 30 secondsAnd number one a full minecraft speedrun with copyrighted music the whole soundtrack was Taylor Swift
-10:2010 minutes, 20 secondsThat's the list drop what I missed in the comments peace`;
+const DEMO_TRANSCRIPT = `00:00 Welcome back everyone to the stream
+00:18 Tonight we are recapping the week and reacting to clips
+00:45 First we talk through the biggest drama from yesterday
+01:12 Then we move into viewer call-ins and follow-up commentary
+01:55 There is a short section discussing a casino sponsor
+02:20 Later the stream shifts into gaming and community chat
+03:10 We close by taking questions from the audience`;
 
 function loadDemo(){
   document.getElementById("transcriptPaste").value = DEMO_TRANSCRIPT;
-  toast("Demo transcript loaded — click Scan Transcript");
+  toast("Demo transcript loaded");
 }
 
 const FLAG_RULES = [
@@ -446,38 +420,38 @@ const FLAG_RULES = [
     patterns:[/\b(slurs?) (were used|thrown around|dropped|said)\b/i,/\bracial slur\b/i,
               /\b(n-word|r-word|f-word used as slur)\b/i,
               /\b(said some (stuff|things) i can'?t repeat)\b/i],
-    reason:"Indication that slurs occur in this segment. Even reacting/quoting can trigger a channel-level strike." },
+    reason:"Indication that slurs occur in this segment." },
   { cat:"Harmful / Dangerous Content", sev:"high",
     patterns:[/\b(bleach|drinking bleach|eating tide pods?|choking (game|challenge))\b.*\b(cure|heal|fix|help|work)\b/i,
               /\b(suicide|self[- ]harm) (method|how to|guide|tutorial)\b/i,
               /\bfaked (his|her|their) (own )?death\b/i,
               /\b(dangerous|lethal|toxic|poisonous)\b.*\b(don'?t try|do not do this|genuinely disturbing)\b/i],
-    reason:"Potentially unsafe content. Rebroadcast risks a strike for harmful/dangerous acts." },
+    reason:"Potentially unsafe content." },
   { cat:"Gambling Promo (regional restriction)", sev:"med",
     patterns:[/\b(online )?casino\b/i,/\b(bet|betting|gambling) (site|platform|sponsor)\b/i,
               /\b(promo|bonus) code\b.*\b(cash|win|deposit|casino|bet)\b/i,
               /\b(easy money|guaranteed (win|return|payout))\b/i],
-    reason:"Gambling sponsor promotion. Category restrictions on Twitch + age-gating required on YouTube." },
+    reason:"Gambling sponsor promotion." },
   { cat:"Doxxing / Private Info", sev:"high",
     patterns:[/\b(doxx?ed|doxx?ing)\b/i,
               /\b(home |street )?address (was )?(read out|leaked|shown|revealed)\b/i,
               /\b(personal (info|information|details)) (leaked|exposed|shown)\b/i,
               /\b(phone number|social security) (leaked|shown|read)\b/i],
-    reason:"Reference to revealing private information. Any rebroadcast is an instant-strike category." },
+    reason:"Reference to revealing private information." },
   { cat:"Election / Political Misinfo", sev:"med",
     patterns:[/\b(rigged|stolen|fraudulent) election\b/i,
               /\b(unverified|unproven) (claim|allegation)s?\b/i,
               /\b(conspiracy|qanon|deep state)\b/i],
-    reason:"Election integrity claims are under elevated moderation. Unchallenged rebroadcasts can be flagged." },
+    reason:"Election integrity claims are under elevated moderation." },
   { cat:"Graphic Violence / Shock", sev:"med",
     patterns:[/\b(gore|graphic|violent|brutal) (footage|clip|video|scene)\b/i,
               /\b(disturbing|genuinely disturbing|not safe for work|nsfw)\b/i,
               /\b(death on stream|murder|killed (live|on stream))\b/i],
-    reason:"Graphic or shock content. Rebroadcast may trigger age restriction or demonetization." },
+    reason:"Graphic or shock content." },
   { cat:"Adult / Sexual Content", sev:"med",
     patterns:[/\b(nude|nudity|sexual (content|act)|porn|pornograph)\b/i,
               /\b(onlyfans|adult content)\b/i,/\bnsfw\b/i],
-    reason:"Adult content reference. Rebroadcast would violate sexual content policies across platforms." },
+    reason:"Adult content reference." },
 ];
 
 function ruleBasedScan(transcript){
@@ -497,6 +471,21 @@ function ruleBasedScan(transcript){
     }
   }
   return flags;
+}
+
+function buildLocalSections(transcript, chunkSize = 12){
+  const sections = [];
+  for(let i=0;i<transcript.length;i+=chunkSize){
+    const chunk = transcript.slice(i, i + chunkSize);
+    if(!chunk.length) continue;
+    const start = chunk[0].t;
+    const end = chunk[chunk.length - 1].t;
+    const text = chunk.map(l=>l.text).join(" ").replace(/\s+/g," ").trim();
+    let label = text.replace(/^(and|but|so|then|okay|ok|well|like)\s+/i, "").trim();
+    if(label.length > 180) label = label.slice(0,177).trimEnd() + "...";
+    sections.push({ start, end, text, label: label || "Transcript section" });
+  }
+  return sections;
 }
 
 function showError(msg){
@@ -519,7 +508,7 @@ function renderWorkspace(){
   document.getElementById("videoScanned").textContent = `${(currentData.flags || []).length} flags`;
   document.getElementById("flagCount").textContent = (currentData.flags || []).length;
   document.querySelector('.rc-tab[data-rc="flags"]').classList.toggle("has-danger", (currentData.flags || []).some(f=>f.sev==="high"));
-  switchRc("flags");
+  switchRc("summary");
 }
 
 function switchRc(which){
@@ -560,7 +549,6 @@ function renderFlags(panel){
       <div class="flag-quote">"${quote}"</div>
     </div>`;
   }
-  html += `<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="exportFlags()">Copy Report</button></div>`;
   panel.innerHTML = html;
 }
 
@@ -571,8 +559,7 @@ function renderSummary(panel){
   if(currentData.summary && currentData.summary.trim()){
     html += `<p>${escapeHtml(currentData.summary)}</p>`;
   } else {
-    const high = flags.filter(f=>f.sev==="high").length;
-    html += `<p>Transcript spans <strong>${currentData.duration}</strong>. Scanner flagged <strong>${flags.length} moment${flags.length===1?"":"s"}</strong>${high>0?` including <strong>${high} high-severity</strong>`:""}.</p>`;
+    html += `<p>No summary was available. Use the Transcript tab to scan section-by-section.</p>`;
   }
 
   html += `</div><div class="panel-title">◆ KEY POINTS</div><ul class="key-points">`;
@@ -593,36 +580,22 @@ function renderSummary(panel){
 }
 
 function renderNotes(panel){
+  const sections = Array.isArray(currentData.sections) && currentData.sections.length
+    ? currentData.sections
+    : buildLocalSections(currentData.transcript || [], 12);
+
   let html = `<div class="panel-title">✎ TRANSCRIPT SUMMARY</div><ul class="key-points">`;
 
-  const chunks = [];
-  for(let i=0;i<currentData.transcript.length;i+=6){
-    chunks.push(currentData.transcript.slice(i,i+6));
-  }
-
-  for(const c of chunks){
-    const first = c[0];
-    const last = c[c.length - 1];
-
-    const fullText = c.map(l=>l.text).join(" ").replace(/\s+/g," ").trim();
-
-    let condensed = fullText
-      .replace(/^(and|but|so|then|okay|ok|well|like)\s+/i, "")
-      .trim();
-
-    if(condensed.length > 150){
-      condensed = condensed.slice(0, 147).trimEnd() + "...";
-    }
-
-    const relatedFlags = (currentData.flags || []).filter(f => f.t >= first.t && f.t <= last.t);
+  for(const s of sections){
+    const relatedFlags = (currentData.flags || []).filter(f => f.t >= s.start && f.t <= s.end);
     const flagBadge = relatedFlags.length
       ? ` <span style="color:var(--warn)">• ${relatedFlags.length} flag${relatedFlags.length===1?"":"s"}</span>`
       : "";
 
     html += `
-      <li style="cursor:pointer" onclick="seekTo(${first.t})">
-        <strong style="color:var(--accent)">${fmtTime(first.t)}${last.t !== first.t ? `–${fmtTime(last.t)}` : ""}</strong>${flagBadge}
-        <div style="margin-top:6px;color:var(--ink-dim)">${escapeHtml(condensed || "Transcript section")}</div>
+      <li style="cursor:pointer" onclick="seekTo(${s.start})">
+        <strong style="color:var(--accent)">${fmtTime(s.start)}${s.end !== s.start ? `–${fmtTime(s.end)}` : ""}</strong>${flagBadge}
+        <div style="margin-top:6px;color:var(--ink-dim)">${escapeHtml(s.label || "Transcript section")}</div>
       </li>
     `;
   }
@@ -634,7 +607,7 @@ function renderNotes(panel){
 function renderTranscript(panel){
   let html = `<div class="panel-title">⎘ FULL TRANSCRIPT</div>`;
   const flaggedTimes = new Set((currentData.flags || []).map(f=>f.t));
-  for(const line of currentData.transcript){
+  for(const line of currentData.transcript || []){
     const flagged = flaggedTimes.has(line.t);
     html += `<div class="transcript-line ${flagged?"flagged":""}" onclick="seekTo(${line.t})">
       <div class="transcript-ts">${fmtTime(line.t)}</div>
@@ -645,16 +618,13 @@ function renderTranscript(panel){
 }
 
 function renderChat(panel){
-  const hint = currentData.aiEnabled
-    ? "Ask anything about this video. AI is live."
-    : "Chat is currently unavailable.";
   panel.innerHTML = `<div class="panel-title">◐ CHAT WITH VIDEO</div>
     <div class="chat-messages" id="chatMessages">
-      <div class="chat-msg bot">I've scanned ${currentData.transcript.length} lines and found ${(currentData.flags || []).length} flags. ${hint}</div>
+      <div class="chat-msg bot">I've scanned ${(currentData.transcript || []).length} lines and found ${(currentData.flags || []).length} flags. Ask anything about this video. AI is live.</div>
     </div>
     <div class="chat-input-row">
-      <input class="chat-input" id="chatInput" placeholder="e.g. Any copyrighted music? Any slurs?" onkeydown="if(event.key==='Enter')sendChat()" ${currentData.aiEnabled?"":"disabled"} />
-      <button class="btn btn-primary" onclick="sendChat()" ${currentData.aiEnabled?"":"disabled"}>Send</button>
+      <input class="chat-input" id="chatInput" placeholder="e.g. Any copyrighted music? What happens around the middle?" onkeydown="if(event.key==='Enter')sendChat()" />
+      <button class="btn btn-primary" onclick="sendChat()">Send</button>
     </div>`;
 }
 
@@ -666,16 +636,31 @@ async function sendChat(){
   const msgs = document.getElementById("chatMessages");
   msgs.insertAdjacentHTML("beforeend",`<div class="chat-msg user">${escapeHtml(q)}</div>`);
   const thinking = document.createElement("div");
-  thinking.className = "chat-msg bot"; thinking.textContent = "Thinking…";
-  msgs.appendChild(thinking); msgs.scrollTop = msgs.scrollHeight;
+  thinking.className = "chat-msg bot";
+  thinking.textContent = "Thinking…";
+  msgs.appendChild(thinking);
+  msgs.scrollTop = msgs.scrollHeight;
+
   try{
     const res = await fetch("/api/chat",{
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ question:q, transcript:currentData.transcript, flags:currentData.flags }),
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        question:q,
+        transcript:currentData.transcript,
+        flags:currentData.flags,
+        sections:currentData.sections
+      }),
     });
     const data = await res.json();
-    thinking.textContent = data.answer || data.error || "No response.";
-  } catch(e){ thinking.textContent = "Error: " + e.message; }
+    if(!res.ok){
+      thinking.textContent = data.detail || data.error || "Chat failed";
+    } else {
+      thinking.textContent = data.answer || "No response.";
+    }
+  } catch(e){
+    thinking.textContent = "Chat failed: " + e.message;
+  }
   msgs.scrollTop = msgs.scrollHeight;
 }
 
@@ -685,20 +670,6 @@ function seekTo(seconds){
   iframe.contentWindow.postMessage(JSON.stringify({event:"command",func:"seekTo",args:[seconds,true]}),"*");
   iframe.contentWindow.postMessage(JSON.stringify({event:"command",func:"playVideo",args:[]}),"*");
   toast(`Jumped to ${fmtTime(seconds)}`);
-}
-
-function exportFlags(){
-  const flags = currentData.flags || [];
-  if(!flags.length){
-    navigator.clipboard.writeText("No flags detected.");
-    toast("Copied clean report");
-    return;
-  }
-  const text = flags.map(f =>
-    `[${fmtTime(f.t)}] ${f.cat} (${f.sev})\nReason: ${f.reason}\nQuote: ${f.quote}\nSource: ${f.source || "rule"}`
-  ).join("\n\n");
-  navigator.clipboard.writeText(text);
-  toast("Copied report");
 }
 
 function escapeHtml(str){
