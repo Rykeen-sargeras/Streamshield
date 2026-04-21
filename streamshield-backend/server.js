@@ -69,6 +69,17 @@ const IT_CLIENTS = [
     },
     ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   },
+  {
+    name: "TVHTML5",
+    context: {
+      client: {
+        clientName: "TVHTML5",
+        clientVersion: "7.20250120.19.00",
+        hl: "en",
+      },
+    },
+    ua: "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0)",
+  },
 ];
 
 function buildYouTubeHeaders(userAgent) {
@@ -136,7 +147,8 @@ function pickCaptionTrack(tracks, preferredLang = "en") {
   return (
     tracks.find((t) => t.languageCode === preferredLang && t.kind !== "asr") ||
     tracks.find((t) => t.languageCode === preferredLang) ||
-    tracks.find((t) => t.kind !== "asr") ||
+    tracks.find((t) => t.vssId && t.vssId.includes(`.${preferredLang}`)) ||
+    tracks.find((t) => t.kind === "asr") ||
     tracks[0]
   );
 }
@@ -459,6 +471,8 @@ app.post("/api/analyze", async (req, res) => {
     if (!tracks.length) {
       return res.status(404).json({
         error: "This video has no captions available.",
+        detail:
+          "YouTube returned no caption tracks for this video. Try another video, or test a talk-heavy upload with known subtitles.",
       });
     }
 
