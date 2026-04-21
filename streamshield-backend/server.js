@@ -1,4 +1,4 @@
-// server.js — StreamShield backend (Gemini hard-coded, frontend-compatible)
+// server.js — StreamShield backend (Gemini hard-coded, section-aware)
 
 const express = require("express");
 const path = require("path");
@@ -6,13 +6,13 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Hard-coded Gemini key for testing
+// Keep your hard-coded Gemini key here
 const GEMINI_API_KEY = "AIzaSyAgSl0CZoPbOzXup1VyDgm6syOgWOM3o2k";
 
 // Optional YouTube cookie from Railway variables
 const YOUTUBE_COOKIE = process.env.YOUTUBE_COOKIE || "";
 
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "3mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 function parseYouTubeId(url) {
@@ -91,10 +91,7 @@ function buildYouTubeHeaders(userAgent) {
     Referer: "https://www.youtube.com/",
   };
 
-  if (YOUTUBE_COOKIE) {
-    headers.Cookie = YOUTUBE_COOKIE;
-  }
-
+  if (YOUTUBE_COOKIE) headers.Cookie = YOUTUBE_COOKIE;
   return headers;
 }
 
@@ -174,9 +171,7 @@ async function fetchCaptionXml(baseUrl, userAgent) {
     lastBody = body.slice(0, 300);
 
     if (r.ok) {
-      if (body.startsWith("<html") || body.startsWith("<!DOCTYPE")) {
-        continue;
-      }
+      if (body.startsWith("<html") || body.startsWith("<!DOCTYPE")) continue;
       if (body.length > 0) return body;
     }
   }
@@ -355,7 +350,33 @@ function ruleBasedScan(transcript) {
   return flags;
 }
 
-function buildFallbackSummary(transcript, flags) {
+function buildSections(transcript, chunkSize = 12) {
+  const sections = [];
+  for (let i = 0; i < transcript.length; i += chunkSize) {
+    const chunk = transcript.slice(i, i + chunkSize);
+    if (!chunk.length) continue;
+
+    const start = chunk[0].t;
+    const end = chunk[chunk.length - 1].t;
+    const text = chunk.map((l) => l.text).join(" ").replace(/\s+/g, " ").trim();
+
+    let label = text
+      .replace(/^(and|but|so|then|okay|ok|well|like|you know)\s+/i, "")
+      .trim();
+
+    if (label.length > 180) label = label.slice(0, 177).trimEnd() + "...";
+
+    sections.push({
+      start,
+      end,
+      text,
+      label: label || "Transcript section",
+    });
+  }
+  return sections;
+}
+
+function buildFallbackSummary(transcript, flags, sections) {
   if (!Array.isArray(transcript) || transcript.length === 0) {
     return "No transcript text was available to summarize.";
   }
@@ -363,30 +384,28 @@ function buildFallbackSummary(transcript, flags) {
   const durationSeconds = transcript[transcript.length - 1]?.t || 0;
   const duration = fmtDuration(durationSeconds);
 
-  const opening = transcript
-    .slice(0, 8)
-    .map((l) => l.text)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const sectionPreview = (sections || [])
+    .slice(0, 4)
+    .map((s) => s.label)
+    .join(" ");
 
-  const shortOpening =
-    opening.length > 260 ? opening.slice(0, 257).trimEnd() + "..." : opening;
+  const shortPreview =
+    sectionPreview.length > 320 ? sectionPreview.slice(0, 317).trimEnd() + "..." : sectionPreview;
 
   const high = flags.filter((f) => f.sev === "high").length;
   const med = flags.filter((f) => f.sev === "med").length;
   const low = flags.filter((f) => f.sev === "low").length;
 
   if (flags.length === 0) {
-    return `This video runs about ${duration}. The opening portion suggests the video focuses on: ${shortOpening || "general spoken commentary"}. No obvious rebroadcast-risk categories were triggered by the current scanner, so it appears relatively safe for replay based on the transcript alone.`;
+    return `This stream runs about ${duration}. Based on the transcript, it appears to cover: ${shortPreview || "general spoken commentary"}. No obvious rebroadcast-risk categories were triggered by the scanner, so it appears relatively safe to replay based on transcript content alone.`;
   }
 
   const topCats = [...new Set(flags.map((f) => f.cat))].slice(0, 3).join(", ");
 
-  return `This video runs about ${duration}. The transcript suggests it focuses on: ${shortOpening || "general spoken commentary"}. The scanner found ${flags.length} potentially relevant moment${flags.length === 1 ? "" : "s"} (${high} high, ${med} medium, ${low} low), mainly around ${topCats}.`;
+  return `This stream runs about ${duration}. Based on the transcript, it appears to cover: ${shortPreview || "general spoken commentary"}. The scanner found ${flags.length} potentially relevant moment${flags.length === 1 ? "" : "s"} (${high} high, ${med} medium, ${low} low), mainly around ${topCats}.`;
 }
 
-async function callGemini(prompt, responseMimeType = "application/json") {
+async function callGemini(prompt, responseMimeType = "text/plain") {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
@@ -411,50 +430,64 @@ async function callGemini(prompt, responseMimeType = "application/json") {
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
-async function aiScan(transcript, ruleFlags = []) {
-  if (!GEMINI_API_KEY) {
-    return { flags: [], summary: buildFallbackSummary(transcript, ruleFlags) };
-  }
+async function summarizeSections(sections, flags, durationText) {
+  if (!GEMINI_API_KEY) return null;
 
-  const joined = transcript
-    .map((l) => `[${l.t}] ${l.text}`)
-    .join("\n")
-    .slice(0, 30000);
+  const outline = sections
+    .slice(0, 24)
+    .map((s) => `- [${fmtDuration(s.start)}-${fmtDuration(s.end)}] ${s.label}`)
+    .join("\n");
 
-  const prompt = `You are a YouTube/Twitch compliance reviewer helping a streamer decide whether they can safely replay a YouTube video on their live stream.
+  const flagText = flags.length
+    ? flags.map((f) => `- [${fmtDuration(f.t)}] ${f.cat} (${f.sev})`).join("\n")
+    : "- No flags detected";
 
-Return ONLY valid JSON.
-Do not use markdown fences.
-Do not include explanation before or after the JSON.
+  const prompt = `You are summarizing a livestream transcript for a streamer who wants to know what the stream is actually about.
 
-Use exactly this schema:
+Write a clean 2-4 sentence summary in plain English.
+Do not talk about yourself.
+Do not say "based on the transcript".
+Do not just repeat that flags were found.
+Focus first on the real subject matter of the stream, then mention whether any risky moments were detected.
+Keep it readable and natural.
+
+Stream length: ${durationText}
+
+Timestamped outline:
+${outline}
+
+Flagged moments:
+${flagText}`;
+
+  const text = await callGemini(prompt, "text/plain");
+  return text?.trim() || null;
+}
+
+async function labelSectionsWithGemini(sections) {
+  if (!GEMINI_API_KEY || !sections.length) return sections;
+
+  const limited = sections.slice(0, 30);
+  const prompt = `Rewrite each transcript chunk into a short clickable timestamp summary.
+
+Return ONLY valid JSON as:
 {
-  "summary": "2-3 sentence overview of the video and its rebroadcast risk",
-  "flags": [
-    {
-      "t": 12,
-      "cat": "Short category",
-      "sev": "high",
-      "reason": "Short reason",
-      "quote": "Transcript quote"
-    }
+  "sections": [
+    { "index": 0, "label": "short summary" }
   ]
 }
 
 Rules:
-- "summary" must always be present and non-empty
-- Use only sev values: "high", "med", or "low"
-- If there are no additional risks, return an empty flags array
-- Keep the summary concise and useful
-- Mention the actual subject matter of the video, not just the risk level
+- 6 to 14 words each
+- describe what happens in that chunk
+- do not use quotes
+- do not say transcript section
+- keep them clear enough that a user knows what they are clicking
 
-Transcript:
-${joined}`;
+Chunks:
+${limited.map((s, i) => `${i}: [${fmtDuration(s.start)}-${fmtDuration(s.end)}] ${s.text.slice(0, 400)}`).join("\n")}`;
 
   try {
     const text = await callGemini(prompt, "application/json");
-    if (!text) throw new Error("Gemini returned empty text");
-
     let parsed;
     try {
       parsed = JSON.parse(text.trim());
@@ -464,21 +497,21 @@ ${joined}`;
       parsed = JSON.parse(match[0]);
     }
 
-    return {
-      flags: Array.isArray(parsed.flags)
-        ? parsed.flags.map((f) => ({ ...f, source: "ai" }))
-        : [],
-      summary:
-        typeof parsed.summary === "string" && parsed.summary.trim()
-          ? parsed.summary.trim()
-          : buildFallbackSummary(transcript, ruleFlags),
-    };
+    const mapped = new Map(
+      Array.isArray(parsed.sections)
+        ? parsed.sections
+            .filter((x) => typeof x?.index === "number" && typeof x?.label === "string")
+            .map((x) => [x.index, x.label.trim()])
+        : []
+    );
+
+    return sections.map((s, i) => ({
+      ...s,
+      label: mapped.get(i) || s.label,
+    }));
   } catch (err) {
-    console.error("Gemini scan failed:", err.message);
-    return {
-      flags: [],
-      summary: buildFallbackSummary(transcript, ruleFlags),
-    };
+    console.error("Gemini section labeling failed:", err.message);
+    return sections;
   }
 }
 
@@ -492,6 +525,61 @@ function mergeFlags(ruleFlags, aiFlags) {
     out.push(f);
   }
   return out.sort((a, b) => a.t - b.t);
+}
+
+async function aiFlagScanFromSections(sections, ruleFlags) {
+  if (!GEMINI_API_KEY) return [];
+
+  const outline = sections
+    .slice(0, 28)
+    .map((s) => `[${fmtDuration(s.start)}-${fmtDuration(s.end)}] ${s.text.slice(0, 350)}`)
+    .join("\n");
+
+  const prompt = `You are a YouTube/Twitch compliance reviewer.
+
+Return ONLY valid JSON in this exact format:
+{
+  "flags": [
+    {
+      "t": 12,
+      "cat": "Short category",
+      "sev": "high",
+      "reason": "Short reason",
+      "quote": "Transcript quote"
+    }
+  ]
+}
+
+Rules:
+- Only include additional high-confidence flags not already obvious from the text
+- Use only sev values high, med, or low
+- Keep quote short
+- If there are no additional risks, return an empty array
+
+Transcript outline:
+${outline}
+
+Existing rule-based categories:
+${[...new Set(ruleFlags.map((f) => f.cat))].join(", ") || "none"}`;
+
+  try {
+    const text = await callGemini(prompt, "application/json");
+    let parsed;
+    try {
+      parsed = JSON.parse(text.trim());
+    } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Gemini did not return parseable JSON");
+      parsed = JSON.parse(match[0]);
+    }
+
+    return Array.isArray(parsed.flags)
+      ? parsed.flags.map((f) => ({ ...f, source: "ai" }))
+      : [];
+  } catch (err) {
+    console.error("Gemini AI flag scan failed:", err.message);
+    return [];
+  }
 }
 
 app.get("/api/health", (req, res) => {
@@ -530,8 +618,7 @@ app.post("/api/analyze", async (req, res) => {
     if (!tracks.length) {
       return res.status(404).json({
         error: "This video has no captions available.",
-        detail:
-          "YouTube returned no caption tracks for this video. Try another video, or test a talk-heavy upload with known subtitles.",
+        detail: "YouTube returned no caption tracks for this video.",
       });
     }
 
@@ -555,8 +642,23 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     const ruleFlags = ruleBasedScan(transcript);
-    const aiResult = await aiScan(transcript, ruleFlags);
-    const flags = mergeFlags(ruleFlags, aiResult.flags);
+
+    let sections = buildSections(transcript, 12);
+    sections = await labelSectionsWithGemini(sections);
+
+    const aiFlags = await aiFlagScanFromSections(sections, ruleFlags);
+    const flags = mergeFlags(ruleFlags, aiFlags);
+
+    let summary = null;
+    try {
+      summary = await summarizeSections(sections, flags, duration);
+    } catch (err) {
+      console.error("Gemini summary failed:", err.message);
+    }
+
+    if (!summary) {
+      summary = buildFallbackSummary(transcript, flags, sections);
+    }
 
     res.json({
       videoId,
@@ -565,7 +667,8 @@ app.post("/api/analyze", async (req, res) => {
       duration,
       transcript,
       flags,
-      summary: aiResult.summary,
+      summary,
+      sections,
       aiEnabled: true,
       captionLang: track.languageCode,
       captionKind: track.kind || "manual",
@@ -584,8 +687,24 @@ app.post("/api/ai-scan", async (req, res) => {
     }
 
     const ruleFlags = ruleBasedScan(transcript);
-    const { flags, summary } = await aiScan(transcript, ruleFlags);
-    res.json({ flags, summary, aiEnabled: true });
+    let sections = buildSections(transcript, 12);
+    sections = await labelSectionsWithGemini(sections);
+
+    const aiFlags = await aiFlagScanFromSections(sections, ruleFlags);
+    const flags = mergeFlags(ruleFlags, aiFlags);
+
+    let summary = null;
+    try {
+      summary = await summarizeSections(sections, flags, fmtDuration(transcript[transcript.length - 1]?.t || 0));
+    } catch (err) {
+      console.error("Gemini summary failed:", err.message);
+    }
+
+    if (!summary) {
+      summary = buildFallbackSummary(transcript, flags, sections);
+    }
+
+    res.json({ flags, summary, sections, aiEnabled: true });
   } catch (err) {
     console.error("AI scan route error:", err);
     res.status(500).json({ error: "AI scan failed", detail: err.message });
@@ -594,31 +713,57 @@ app.post("/api/ai-scan", async (req, res) => {
 
 app.post("/api/chat", async (req, res) => {
   try {
-    const { question, transcript, flags } = req.body || {};
+    const { question, transcript, flags, sections } = req.body || {};
     if (!question || !Array.isArray(transcript)) {
       return res.status(400).json({ error: "Missing question or transcript" });
     }
 
-    const joined = transcript.map((l) => `[${l.t}] ${l.text}`).join("\n").slice(0, 40000);
+    const safeSections = Array.isArray(sections) && sections.length
+      ? sections
+      : buildSections(transcript, 12);
+
+    const outline = safeSections
+      .slice(0, 28)
+      .map((s) => `- [${fmtDuration(s.start)}-${fmtDuration(s.end)}] ${s.label}`)
+      .join("\n");
+
     const flagSummary =
       Array.isArray(flags) && flags.length
-        ? `\n\nDetected flags:\n${flags
-            .map((f) => `- [${f.t}s] ${f.cat} (${f.sev}): ${f.quote}`)
-            .join("\n")}`
-        : "";
+        ? flags
+            .slice(0, 20)
+            .map((f) => `- [${fmtDuration(f.t)}] ${f.cat} (${f.sev})`)
+            .join("\n")
+        : "- No flags detected";
 
-    const prompt = `You are a helpful assistant answering questions about a YouTube video transcript.
-Be concise.
-When referencing moments, include timestamps like [MM:SS].
+    const prompt = `You are answering questions about a livestream transcript.
 
-Transcript:
-${joined}${flagSummary}
+Use the outline below to answer clearly.
+If possible, mention timestamps like [MM:SS].
+If the answer is not fully certain, say so briefly.
+Keep answers concise but useful.
 
-Question:
+Outline:
+${outline}
+
+Flags:
+${flagSummary}
+
+User question:
 ${question}`;
 
-    const answer = await callGemini(prompt, "text/plain");
-    res.json({ answer: answer || "No response" });
+    let answer = null;
+    try {
+      answer = await callGemini(prompt, "text/plain");
+    } catch (err) {
+      console.error("Chat Gemini call failed:", err.message);
+    }
+
+    if (!answer || !answer.trim()) {
+      const fallbackFirst = safeSections.slice(0, 3).map((s) => `[${fmtDuration(s.start)}] ${s.label}`).join(" ");
+      answer = `I could not generate a full AI answer right now. From the transcript outline, the stream appears to cover: ${fallbackFirst || "general spoken commentary"}.`;
+    }
+
+    res.json({ answer: answer.trim() });
   } catch (err) {
     console.error("Chat error:", err);
     res.status(500).json({ error: "Chat failed", detail: err.message });
