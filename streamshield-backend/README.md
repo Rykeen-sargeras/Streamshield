@@ -4,7 +4,7 @@ NoteGPT-style YouTube analyzer with a ToS flag scanner for streamers. Paste a Yo
 
 ## What's in the box
 
-- **`server.js`** — Express backend. Fetches YouTube transcripts, runs rule-based flag scanning, optionally calls Claude for AI-powered flag detection and summaries.
+- **`server.js`** — Express backend. Fetches YouTube transcripts, runs rule-based flag scanning, optionally calls Gemini for AI-powered flag detection and summaries.
 - **`public/index.html`** — Full frontend. Single file, no build step.
 - **`railway.json`** — Railway deployment config.
 - **`package.json`** — Dependencies.
@@ -35,16 +35,17 @@ git push -u origin main
 3. Select your `streamshield` repo (you may need to grant Railway access)
 4. Railway auto-detects Node.js via Nixpacks and starts building immediately
 
-### 3. Add your Anthropic API key (for AI features)
+### 3. Add your Gemini API key (for AI features)
 
-Without this key, the app still works — you just get keyword-based flag scanning instead of AI-powered detection and chat.
+Without this key, the app still works — you just get keyword-based flag scanning instead of AI-powered detection, summaries, and chat.
 
-1. In your Railway project dashboard, click your service
-2. Click the **Variables** tab
-3. Click **New Variable**
-4. Name: `ANTHROPIC_API_KEY`
-5. Value: your key from https://console.anthropic.com/settings/keys (starts with `sk-ant-`)
-6. Click **Add** — Railway will redeploy automatically
+1. Get a free key at https://aistudio.google.com/app/apikey (starts with `AIza...`)
+2. In your Railway project dashboard, click your service
+3. Click the **Variables** tab
+4. Click **New Variable**
+5. Name: `GEMINI_API_KEY`
+6. Value: your key
+7. Click **Add** — Railway will redeploy automatically
 
 ### 4. Generate a public URL
 
@@ -65,7 +66,7 @@ In **Settings → Networking → Custom Domain**, add your domain and follow Rai
 cd streamshield-backend
 npm install
 cp .env.example .env
-# Edit .env and paste your ANTHROPIC_API_KEY
+# Edit .env and paste your GEMINI_API_KEY
 npm start
 ```
 
@@ -83,7 +84,7 @@ Open http://localhost:3000
        │      JSON response           │     /player API  │
        │  (transcript, flags,         │  3. Fetch caps   │
        │   summary, metadata)         │  4. Rule scan    │
-       └────────────────────────────  │  5. Claude scan  │
+       └────────────────────────────  │  5. Gemini scan  │
                                       │  6. Merge        │
                                       └──────────────────┘
 ```
@@ -93,7 +94,7 @@ No third-party YouTube scrapers — the backend hits YouTube's own InnerTube API
 ### Flag sources
 
 - **Rule-based** (always on, free, instant) — regex patterns matched against each transcript line for 10 risk categories.
-- **AI-based** (needs `ANTHROPIC_API_KEY`) — sends the transcript to Claude with a compliance-reviewer system prompt. Catches sarcasm, context, implied content that keyword rules miss.
+- **AI-based** (needs `GEMINI_API_KEY`) — sends the transcript to Gemini with a compliance-reviewer system prompt. Catches sarcasm, context, implied content that keyword rules miss.
 
 Both run in parallel when AI is on. Duplicate flags on the same timestamp+category are merged.
 
@@ -143,10 +144,10 @@ YouTube is throttling the IP. Railway's default IPs normally work fine, but if y
   - As a last resort, you can pass a YouTube cookie header to bypass the throttling — grab one from your browser's devtools (the `__Secure-1PSID` cookie), add a `YOUTUBE_COOKIE` env var in Railway, and add `Cookie: process.env.YOUTUBE_COOKIE` to the request headers in `fetchPlayerData` and `fetchCaptionXml` in `server.js`
 
 **AI flags not appearing**
-Check that `ANTHROPIC_API_KEY` is set in Railway variables and that your key has credits at https://console.anthropic.com. Check Railway logs (`View Logs` on your service) for error details.
+Check that `GEMINI_API_KEY` is set in Railway variables and that your key has credits at https://aistudio.google.com/apikey. Check Railway logs (`View Logs` on your service) for error details.
 
 **Chat button is disabled**
-Same fix — needs `ANTHROPIC_API_KEY`.
+Same fix — needs `GEMINI_API_KEY`.
 
 **Build fails on Railway**
 Make sure your Node version matches — `package.json` specifies `"node": ">=20"`. Railway defaults to Node 20 via Nixpacks. If you're on an older project, go to **Settings → Deploy** and check the Nixpacks version.
@@ -154,7 +155,7 @@ Make sure your Node version matches — `package.json` specifies `"node": ">=20"
 ## Cost estimate
 
 - **Railway**: ~$5/mo for the included usage tier, scales with traffic
-- **Anthropic API**: with Claude Opus 4.7, a typical 10-minute YouTube transcript (~1500 words) costs roughly **$0.05–0.15 per analysis**. For cheaper runs, change `claude-opus-4-7` to `claude-haiku-4-5-20251001` in `server.js` (roughly 10× cheaper, still very capable for this task).
+- **Gemini API**: `gemini-1.5-flash` has a generous free tier (~1500 requests/day as of early 2026). Well beyond that, it's roughly $0.01–0.02 per video analysis.
 
 ## Customizing the flag rules
 

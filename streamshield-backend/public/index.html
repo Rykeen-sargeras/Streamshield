@@ -192,9 +192,14 @@ button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit
       <div class="mode paste-area" id="mode-paste">
         <textarea id="transcriptPaste" placeholder="Paste a YouTube transcript here.
 
-Supports timestamped lines such as:
-00:00 Welcome
-01:23 Next section..."></textarea>
+Supports YouTube Studio's 'Show transcript' format:
+  0:011 secondHello, welcome to my show
+  1:021 minute, 2 secondsAnd then I said...
+
+Or the simple timestamp format:
+  00:00 Welcome
+  01:23 Next section..."></textarea>
+        <div class="paste-hint">Tip: open any YouTube video → click <code>···</code> under the video → <code>Show transcript</code> → select all and paste here.</div>
         <div class="paste-actions">
           <button class="btn" onclick="loadDemo()">Load Demo</button>
           <button class="btn btn-primary" id="pasteBtn" onclick="analyzePaste()">Scan Transcript →</button>
@@ -222,8 +227,8 @@ Supports timestamped lines such as:
     <div class="rc-tabs">
       <button class="rc-tab active" data-rc="flags" onclick="switchRc('flags')">⚑ Flags <span class="count" id="flagCount">0</span></button>
       <button class="rc-tab" data-rc="summary" onclick="switchRc('summary')">Summary</button>
-      <button class="rc-tab" data-rc="notes" onclick="switchRc('notes')">Transcript</button>
-      <button class="rc-tab" data-rc="transcript" onclick="switchRc('transcript')">Full Transcript</button>
+      <button class="rc-tab" data-rc="sections" onclick="switchRc('sections')">Transcript</button>
+      <button class="rc-tab" data-rc="fulltranscript" onclick="switchRc('fulltranscript')">Full Transcript</button>
       <button class="rc-tab" data-rc="chat" onclick="switchRc('chat')">Chat</button>
     </div>
     <div class="rc-panel" id="rcPanel"></div>
@@ -279,21 +284,17 @@ function switchTab(which){
 async function analyzeUrl(){
   const url = document.getElementById("urlInput").value.trim();
   if(!url){ showError("Enter a YouTube URL first"); return; }
-
   const btn = document.getElementById("analyzeBtn");
   const loader = document.getElementById("loadingBar");
   const loadMsg = document.getElementById("loadingMsg");
   const err = document.getElementById("errorBox");
-
   btn.disabled = true;
   loader.classList.add("active");
   err.classList.remove("active");
   loadMsg.textContent = "Fetching transcript";
-
   const msgs = ["Fetching transcript", "Pulling metadata", "Building sections", "Analyzing with AI"];
   let i = 0;
   const interval = setInterval(()=>{ i=(i+1)%msgs.length; loadMsg.textContent = msgs[i]; }, 1800);
-
   try {
     const res = await fetch("/api/analyze", {
       method: "POST",
@@ -318,22 +319,18 @@ async function analyzeUrl(){
 async function analyzePaste(){
   const raw = document.getElementById("transcriptPaste").value.trim();
   if(!raw){ showError("Paste a transcript first"); return; }
-
   const btn = document.getElementById("pasteBtn");
   btn.disabled = true;
   document.getElementById("errorBox").classList.remove("active");
-
   try {
     const transcript = parsePastedTranscript(raw);
     if(transcript.length === 0){
       showError("Couldn't find any timestamped lines. Make sure each line starts with a timestamp like 0:00 or 01:23.");
       return;
     }
-
     let flags = ruleBasedScan(transcript);
+    let sections = buildLocalSections(transcript);
     let summary = null;
-    let sections = buildLocalSections(transcript, 12);
-
     if(aiEnabled){
       try {
         const res = await fetch("/api/ai-scan", {
@@ -342,24 +339,16 @@ async function analyzePaste(){
         });
         if(res.ok){
           const data = await res.json();
-          summary = data.summary;
-          sections = Array.isArray(data.sections) && data.sections.length ? data.sections : sections;
-          flags = Array.isArray(data.flags) ? data.flags : flags;
+          if(Array.isArray(data.flags)) flags = data.flags;
+          if(Array.isArray(data.sections) && data.sections.length) sections = data.sections;
+          if(data.summary) summary = data.summary;
         }
       } catch(e){ console.warn("AI scan failed, using rule-based only:", e); }
     }
-
     const duration = fmtTime(transcript[transcript.length-1].t);
     currentData = {
-      videoId: null,
-      title: "Pasted Transcript",
-      channel: "—",
-      duration,
-      transcript,
-      flags,
-      sections,
-      summary,
-      aiEnabled,
+      videoId: null, title: "Pasted Transcript", channel: "—",
+      duration, transcript, flags, sections, summary, aiEnabled,
     };
     renderWorkspace();
     document.getElementById("workspace").scrollIntoView({behavior:"smooth"});
@@ -370,6 +359,9 @@ async function analyzePaste(){
   }
 }
 
+// Robust parser — handles YouTube Studio's "Show transcript" format
+// (with glued duration descriptors like "1 minuteSo...") AND simple
+// "MM:SS text" format AND [MM:SS] bracketed format.
 function parsePastedTranscript(raw) {
   const out = [];
   const lines = raw.split(/\r?\n/);
@@ -381,7 +373,15 @@ function parsePastedTranscript(raw) {
     const h = tsMatch[3] ? parseInt(tsMatch[1], 10) : 0;
     const m = tsMatch[3] ? parseInt(tsMatch[2], 10) : parseInt(tsMatch[1], 10);
     const s = tsMatch[3] ? parseInt(tsMatch[3], 10) : parseInt(tsMatch[2], 10);
-    let rest = tsMatch[4].trim();
+    let rest = tsMatch[4];
+    // Peel YouTube's glued duration descriptors. Case-sensitive 's?'
+    // so we don't eat a capital S starting the real transcript text.
+    while (true) {
+      const m2 = rest.match(/^(?:\s*,?\s*)(\d+)\s*(hour|minute|second)(s?)(.*)$/);
+      if (!m2) break;
+      rest = m2[4];
+    }
+    rest = rest.trim();
     if (rest) out.push({ t: h * 3600 + m * 60 + s, text: rest });
   }
   return out;
@@ -415,7 +415,7 @@ const FLAG_RULES = [
     patterns:[/\b(sketchy|illegal|pirat|free stream(ing)?) (site|link|website)\b/i,
               /\b(link in (the )?description|dm me for (the )?link|leaked.*link)\b/i,
               /\b(just don'?t tell (netflix|disney|hbo|the studio))\b/i],
-    reason:"Promotion of piracy or off-platform sharing of infringing content. Direct ToS violation." },
+    reason:"Promotion of piracy or off-platform sharing of infringing content." },
   { cat:"Slurs / Hate Speech", sev:"high",
     patterns:[/\b(slurs?) (were used|thrown around|dropped|said)\b/i,/\bracial slur\b/i,
               /\b(n-word|r-word|f-word used as slur)\b/i,
@@ -461,10 +461,8 @@ function ruleBasedScan(transcript){
       for(const pat of rule.patterns){
         const m = line.text.match(pat);
         if(m){
-          flags.push({
-            t: line.t, cat: rule.cat, sev: rule.sev,
-            reason: rule.reason, quote: line.text, match: m[0], source: "rule",
-          });
+          flags.push({ t: line.t, cat: rule.cat, sev: rule.sev,
+            reason: rule.reason, quote: line.text, match: m[0], source: "rule" });
           break;
         }
       }
@@ -473,7 +471,10 @@ function ruleBasedScan(transcript){
   return flags;
 }
 
-function buildLocalSections(transcript, chunkSize = 12){
+function buildLocalSections(transcript){
+  if(!transcript.length) return [];
+  const targetSections = 28;
+  const chunkSize = Math.max(8, Math.min(40, Math.ceil(transcript.length / targetSections)));
   const sections = [];
   for(let i=0;i<transcript.length;i+=chunkSize){
     const chunk = transcript.slice(i, i + chunkSize);
@@ -481,7 +482,7 @@ function buildLocalSections(transcript, chunkSize = 12){
     const start = chunk[0].t;
     const end = chunk[chunk.length - 1].t;
     const text = chunk.map(l=>l.text).join(" ").replace(/\s+/g," ").trim();
-    let label = text.replace(/^(and|but|so|then|okay|ok|well|like)\s+/i, "").trim();
+    let label = text.replace(/^(and|but|so|then|okay|ok|well|like|you know)\s+/i, "").trim();
     if(label.length > 180) label = label.slice(0,177).trimEnd() + "...";
     sections.push({ start, end, text, label: label || "Transcript section" });
   }
@@ -517,8 +518,8 @@ function switchRc(which){
   panel.innerHTML = "";
   if(which==="flags") renderFlags(panel);
   else if(which==="summary") renderSummary(panel);
-  else if(which==="notes") renderNotes(panel);
-  else if(which==="transcript") renderTranscript(panel);
+  else if(which==="sections") renderSections(panel);
+  else if(which==="fulltranscript") renderTranscript(panel);
   else if(which==="chat") renderChat(panel);
 }
 
@@ -555,18 +556,14 @@ function renderFlags(panel){
 function renderSummary(panel){
   const flags = currentData.flags || [];
   let html = `<div class="panel-title">◆ SUMMARY</div><div class="summary-block">`;
-
   if(currentData.summary && currentData.summary.trim()){
     html += `<p>${escapeHtml(currentData.summary)}</p>`;
   } else {
     html += `<p>No summary was available. Use the Transcript tab to scan section-by-section.</p>`;
   }
-
   html += `</div><div class="panel-title">◆ KEY POINTS</div><ul class="key-points">`;
-
   const cats = {};
   flags.forEach(f=>{ cats[f.cat] = (cats[f.cat]||0)+1; });
-
   if(Object.keys(cats).length === 0){
     html += `<li>No flag categories triggered. Use the Transcript tab for clickable timestamp summaries and the Full Transcript tab for line-by-line text.</li>`;
   } else {
@@ -574,24 +571,20 @@ function renderSummary(panel){
       html += `<li><strong style="color:var(--warn)">${n}×</strong> ${escapeHtml(cat)}</li>`;
     }
   }
-
   html += `</ul>`;
   panel.innerHTML = html;
 }
 
-function renderNotes(panel){
+function renderSections(panel){
   const sections = Array.isArray(currentData.sections) && currentData.sections.length
     ? currentData.sections
-    : buildLocalSections(currentData.transcript || [], 12);
-
+    : buildLocalSections(currentData.transcript || []);
   let html = `<div class="panel-title">✎ TRANSCRIPT SUMMARY</div><ul class="key-points">`;
-
   for(const s of sections){
     const relatedFlags = (currentData.flags || []).filter(f => f.t >= s.start && f.t <= s.end);
     const flagBadge = relatedFlags.length
       ? ` <span style="color:var(--warn)">• ${relatedFlags.length} flag${relatedFlags.length===1?"":"s"}</span>`
       : "";
-
     html += `
       <li style="cursor:pointer" onclick="seekTo(${s.start})">
         <strong style="color:var(--accent)">${fmtTime(s.start)}${s.end !== s.start ? `–${fmtTime(s.end)}` : ""}</strong>${flagBadge}
@@ -599,7 +592,6 @@ function renderNotes(panel){
       </li>
     `;
   }
-
   html += `</ul>`;
   panel.innerHTML = html;
 }
@@ -618,13 +610,16 @@ function renderTranscript(panel){
 }
 
 function renderChat(panel){
+  const hint = aiEnabled
+    ? "Ask anything about this video. AI is live."
+    : "Chat needs AI — set GEMINI_API_KEY in Railway variables.";
   panel.innerHTML = `<div class="panel-title">◐ CHAT WITH VIDEO</div>
     <div class="chat-messages" id="chatMessages">
-      <div class="chat-msg bot">I've scanned ${(currentData.transcript || []).length} lines and found ${(currentData.flags || []).length} flags. Ask anything about this video. AI is live.</div>
+      <div class="chat-msg bot">I've scanned ${(currentData.transcript || []).length} lines and found ${(currentData.flags || []).length} flags. ${hint}</div>
     </div>
     <div class="chat-input-row">
-      <input class="chat-input" id="chatInput" placeholder="e.g. Any copyrighted music? What happens around the middle?" onkeydown="if(event.key==='Enter')sendChat()" />
-      <button class="btn btn-primary" onclick="sendChat()">Send</button>
+      <input class="chat-input" id="chatInput" placeholder="e.g. Any copyrighted music? What happens around the middle?" onkeydown="if(event.key==='Enter')sendChat()" ${aiEnabled?"":"disabled"} />
+      <button class="btn btn-primary" onclick="sendChat()" ${aiEnabled?"":"disabled"}>Send</button>
     </div>`;
 }
 
@@ -640,16 +635,13 @@ async function sendChat(){
   thinking.textContent = "Thinking…";
   msgs.appendChild(thinking);
   msgs.scrollTop = msgs.scrollHeight;
-
   try{
     const res = await fetch("/api/chat",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        question:q,
-        transcript:currentData.transcript,
-        flags:currentData.flags,
-        sections:currentData.sections
+        question:q, transcript:currentData.transcript,
+        flags:currentData.flags, sections:currentData.sections
       }),
     });
     const data = await res.json();
@@ -680,11 +672,9 @@ function escapeHtml(str){
     .replace(/"/g,"&quot;")
     .replace(/'/g,"&#39;");
 }
-
 function escapeReg(str){
   return String(str ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
 let toastTimer = null;
 function toast(msg){
   const t = document.getElementById("toast");
